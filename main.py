@@ -3,6 +3,7 @@ import os
 import random
 import sys
 import heapq
+import asyncio
 from dataclasses import dataclass, field
 
 import pygame
@@ -13,10 +14,22 @@ try:
 except ImportError:
     _HAS_NAV_MASK = False
 
+# EXTREMELY AGGRESSIVE WEB-PATH HANDLING
+def get_web_path(folder, filename):
+    """Tries multiple common pygbag/web paths to find an asset."""
+    paths_to_try = [
+        os.path.join(folder, filename),               # Standard
+        os.path.join(".", folder, filename),           # Relative root
+        os.path.join("build", "web", folder, filename), # Build path
+        filename,                                      # Direct (fallback)
+    ]
+    for p in paths_to_try:
+        if os.path.exists(p):
+            return p
+    return None
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSET_DIR = os.path.join(BASE_DIR, "assets")
-SOUND_DIR = os.path.join(BASE_DIR, "Sounds")
+ASSET_DIR = "assets"
+SOUND_DIR = "Sounds"
 
 SCREEN_W = 1280
 SCREEN_H = 760
@@ -274,6 +287,26 @@ STRUCT_DEFS = {
         "cost": 500,
         "color": (132, 90, 54),
     },
+}
+
+ENTITY_SPRITE_TYPES = {
+    "conyard": "conyard",
+    "powerplant": "powerplant",
+    "barracks": "barracks",
+    "warfactory": "warfactory",
+    "refinery": "refinery",
+    "turret": "turret",
+    "tesla": "tesla",
+    "radar": "radar",
+    "conscript": "troop",
+    "gi": "troop",
+    "dog": "dog",
+    "tesla_trooper": "tesla_trooper",
+    "rhino": "rhino",
+    "grizzly": "rhino_0",
+    "v3": "v3",
+    "apocalypse": "apocalypse",
+    "prism": "apocalypse",
 }
 
 BUILD_KEYS = {
@@ -572,6 +605,7 @@ class Game:
     small: pygame.font.Font
     big: pygame.font.Font
     assets: dict = field(default_factory=dict)
+    scaled_assets: dict[tuple[int, int, int], pygame.Surface] = field(default_factory=dict)
     sounds: dict = field(default_factory=dict)
     entities: list[Entity] = field(default_factory=list)
     ore: list[Ore] = field(default_factory=list)
@@ -614,6 +648,7 @@ class Game:
     base_warning_timer: float = 0
     active_tab: str = "bldg"
     paused_buttons: list[Button] = field(default_factory=list)
+    difficulty_buttons: list[Button] = field(default_factory=list)
     muted: bool = False
     sfx_volume: float = 1.0
     cheat_buffer: str = ""
@@ -659,8 +694,8 @@ class Game:
             names[f"red_rhino_{i}"] = f"Rhino_Red_{i}.png"
             names[f"blue_rhino_{i}"] = f"Rhino_Blue_{i}.png"
         for key, filename in names.items():
-            path = os.path.join(ASSET_DIR, filename)
-            if os.path.exists(path):
+            path = get_web_path(ASSET_DIR, filename)
+            if path and os.path.exists(path):
                 try:
                     self.assets[key] = pygame.image.load(path).convert_alpha()
                 except pygame.error:
@@ -672,2367 +707,1015 @@ class Game:
         else:
             self.map_surface = self.create_fallback_map()
 
+    def create_fallback_map(self):
+        surf = pygame.Surface((WORLD_W, WORLD_H))
+        surf.fill((50, 120, 50))
+        return surf
+
     def load_sounds(self):
         if not pygame.mixer.get_init():
             return
         pygame.mixer.set_reserved(1)
         self.music_channel = pygame.mixer.Channel(0)
         names = {
-            "click": "Clicking_Sound.mp3",
-            "menu_music": "Landing_Page_Song.mp3",
-            "theme": "Theme_Song.mp3",
-            "build_start": "building.mp3",
-            "construction_done": "construction-completed.mp3",
-            "new_options": "new-construction-options.mp3",
-            "insufficient": "insufficient-balance.mp3",
-            "unit_ready": "unit-ready.mp3",
-            "move": "moving-out.mp3",
-            "affirmative": "affirmative.mp3",
-            "yes_commander": "yes-commander.mp3",
-            "yes_sir": "yes-sir.mp3",
-            "absolutely": "absolutely.mp3",
-            "cancel": "cancel.mp3",
-            "hold": "on-hold.mp3",
-            "base_danger": "our-base-is-in-danger.mp3",
-            "dog": "dog_sound.mp3",
-            "victory": "congratulations.mp3",
-            "defeat": "Loosing_Sound.mp3",
+            "click": "web_audio/Clicking_Sound.ogg",
+            "menu_music": "web_audio/Landing_Page_Song.ogg",
+            "theme": "web_audio/Theme_Song.ogg",
+            "build_start": "web_audio/building.ogg",
+            "construction_done": "web_audio/construction-completed.ogg",
+            "new_options": "web_audio/new-construction-options.ogg",
+            "insufficient": "web_audio/insufficient-balance.ogg",
+            "unit_ready": "web_audio/unit-ready.ogg",
+            "move": "web_audio/moving-out.ogg",
+            "affirmative": "web_audio/affirmative.ogg",
+            "yes_commander": "web_audio/yes-commander.ogg",
+            "yes_sir": "web_audio/yes-sir.ogg",
+            "absolutely": "web_audio/absolutely.ogg",
+            "cancel": "web_audio/cancel.ogg",
+            "hold": "web_audio/on-hold.ogg",
+            "base_danger": "web_audio/our-base-is-in-danger.ogg",
+            "dog": "web_audio/dog_sound.ogg",
+            "victory": "web_audio/congratulations.ogg",
+            "defeat": "web_audio/Loosing_Sound.ogg",
         }
         for key, filename in names.items():
-            path = os.path.join(SOUND_DIR, filename)
-            if os.path.exists(path):
-                try:
-                    self.sounds[key] = pygame.mixer.Sound(path)
-                except pygame.error:
-                    pass
-        for key, sound in self.sounds.items():
-            sound.set_volume(0.28 if key in ("menu_music", "theme") else 0.45)
-
-    def play(self, key):
-        if self.muted or not pygame.mixer.get_init():
-            return
-        sound = self.sounds.get(key)
-        if sound:
+            path = get_web_path(SOUND_DIR, filename)
+            if not path:
+                print(f"Warning: Sound file not found: {filename}")
+                continue
             try:
-                vol = 0.28 if key in ("menu_music", "theme") else 0.45
-                sound.set_volume(vol * self.sfx_volume)
-                sound.play()
-            except Exception:
-                pass
+                self.sounds[key] = pygame.mixer.Sound(path)
+            except pygame.error as exc:
+                print(f"Warning: Could not load sound {filename}: {exc}")
 
-    def play_cursor_click(self, event):
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button in (1, 2, 3, 4, 5):
-            self.play("click")
+    def play_sfx(self, key):
+        if not self.muted and key in self.sounds:
+            self.sounds[key].set_volume(self.sfx_volume)
+            self.sounds[key].play()
 
-    def music(self, key):
-        try:
-            if self.music_mode == key or key not in self.sounds:
-                return
-            if not pygame.mixer.get_init():
-                return
-            if not self.music_channel:
-                self.music_channel = pygame.mixer.Channel(0)
+    def play_music(self, key):
+        if key == "menu_music" and "menu_music" in self.sounds:
+            self.music_mode = "menu"
+            self.music_channel.play(self.sounds["menu_music"], loops=-1)
+        elif key == "theme" and "theme" in self.sounds:
+            self.music_mode = "battle"
+            self.music_channel.play(self.sounds["theme"], loops=-1)
+        elif key == "none":
+            self.music_mode = None
             self.music_channel.stop()
-            
-            # Set music channel volume
-            vol = 0.28 if key in ("menu_music", "theme") else 0.45
-            if self.muted:
-                self.music_channel.set_volume(0)
-            else:
-                self.music_channel.set_volume(vol * self.sfx_volume)
-                
-            self.music_channel.play(self.sounds[key], loops=-1)
-            self.music_mode = key
-        except Exception:
-            pass
 
-    def update_music_volume(self):
-        if not pygame.mixer.get_init() or not self.music_channel:
+    def selected(self):
+        return [e for e in self.entities if e.id in self.selected_ids and e.hp > 0]
+
+    def closest_visible_enemy(self, unit):
+        return min(
+            (
+                target
+                for target in self.entities
+                if target.team != unit.team
+                and target.hp > 0
+                and entity_distance(unit, target) <= unit.sight
+            ),
+            key=lambda target: entity_distance(unit, target),
+            default=None,
+        )
+
+    def event(self, event):
+        if self.game_over:
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+                self.reset_game()
             return
-        if self.muted:
-            self.music_channel.set_volume(0)
+
+        if self.difficulty is None:
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_1, pygame.K_KP_1):
+                    self.start_game("easy")
+                elif event.key in (pygame.K_2, pygame.K_KP_2):
+                    self.start_game("medium")
+                elif event.key in (pygame.K_3, pygame.K_KP_3):
+                    self.start_game("hard")
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                for button in self.difficulty_buttons:
+                    if button.rect.collidepoint(event.pos):
+                        self.start_game(button.action)
+                        break
+            return
+
+        if self.paused:
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_p:
+                self.paused = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                for btn in self.paused_buttons:
+                    if btn.rect.collidepoint(event.pos):
+                        if btn.action == "resume":
+                            self.paused = False
+                        elif btn.action == "mute":
+                            self.muted = not self.muted
+            return
+
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit()
+
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_p:
+                self.paused = True
+            elif event.key == pygame.K_ESCAPE:
+                self.placing = None
+                self.repair_mode = False
+                self.sell_mode = False
+                self.selected_ids = []
+            elif event.key == pygame.K_g:
+                self.debug_nav = not self.debug_nav
+            elif event.key == pygame.K_DELETE:
+                self.sell_selected()
+            elif event.key == pygame.K_h:
+                self.placing = None
+                self.sell_mode = False
+                self.repair_mode = not self.repair_mode
+            elif event.key == pygame.K_x:
+                self.placing = None
+                self.repair_mode = False
+                self.sell_mode = not self.sell_mode
+            elif event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS:
+                self.camera.zoom = min(2.0, self.camera.zoom + 0.1)
+            elif event.key == pygame.K_MINUS:
+                self.camera.zoom = max(0.5, self.camera.zoom - 0.1)
+            elif event.key in BUILD_KEYS:
+                self.placing = BUILD_KEYS[event.key]
+                self.repair_mode = False
+                self.sell_mode = False
+            elif event.key in TRAIN_KEYS:
+                self.train_unit(TRAIN_KEYS[event.key])
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1: # Left
+                if event.pos[0] >= VIEW_W:
+                    for button in self.buttons:
+                        if not button.rect.collidepoint(event.pos):
+                            continue
+                        if button.kind == "tab":
+                            self.active_tab = button.action
+                        elif button.kind == "build":
+                            self.placing = button.action
+                            self.repair_mode = False
+                            self.sell_mode = False
+                        elif button.kind == "train":
+                            self.train_unit(button.action)
+                        elif button.kind == "tool":
+                            if button.action == "repair":
+                                self.repair_mode = not self.repair_mode
+                                self.sell_mode = False
+                            elif button.action == "sell":
+                                self.sell_mode = not self.sell_mode
+                                self.repair_mode = False
+                            self.placing = None
+                        return
+                    return
+                if self.placing:
+                    self.place_building(event.pos)
+                elif self.repair_mode:
+                    self.start_repair(event.pos)
+                elif self.sell_mode:
+                    self.start_sell(event.pos)
+                else:
+                    self.drag_start = event.pos
+                    self.drag_pos = event.pos
+            elif event.button == 3: # Right
+                if event.pos[0] < VIEW_W:
+                    self.handle_right_click(event.pos)
+            elif event.button == 2: # Middle
+                self.panning = True
+                self.pan_start = event.pos
+                self.pan_cam = (self.camera.x, self.camera.y)
+
+        if event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1:
+                if not self.placing and not self.repair_mode and not self.sell_mode:
+                    self.finish_selection()
+                self.drag_start = None
+                self.drag_pos = None
+            elif event.button == 2:
+                self.panning = False
+
+        if event.type == pygame.MOUSEMOTION:
+            if self.drag_start:
+                self.drag_pos = event.pos
+            if self.panning:
+                dx = (event.pos[0] - self.pan_start[0]) / self.camera.zoom
+                dy = (event.pos[1] - self.pan_start[1]) / self.camera.zoom
+                self.camera.x = self.pan_cam[0] - dx
+                self.camera.y = self.pan_cam[1] - dy
+
+    def handle_right_click(self, pos):
+        if self.placing or self.repair_mode or self.sell_mode:
+            self.placing = None
+            self.repair_mode = False
+            self.sell_mode = False
+            return
+
+        # Convert screen pos to world pos
+        wx = (pos[0] - VIEW_W / 2) / self.camera.zoom + self.camera.x
+        wy = (pos[1] - TOP_H - VIEW_H / 2) / self.camera.zoom + self.camera.y
+
+        selected = self.selected()
+        if not selected:
+            return
+
+        # Check if we clicked an enemy entity
+        target = None
+        for e in self.entities:
+            if e.team != TEAM_RED and e.hp > 0:
+                if e.rect().collidepoint(wx, wy):
+                    target = e
+                    break
+
+        if target:
+            # Attack target
+            for e in selected:
+                if e.kind == "unit":
+                    e.state = "attack"
+                    e.target_id = target.id
+                    e.path = []
+                    e.path_goal = (target.x + target.w / 2, target.y + target.h / 2)
+                    self.play_sfx("move")
         else:
-            vol = 0.28 if self.music_mode in ("menu_music", "theme") else 0.45
-            self.music_channel.set_volume(vol * self.sfx_volume)
+            units = [e for e in selected if e.kind == "unit"]
+            columns = math.ceil(math.sqrt(len(units)))
+            rows = math.ceil(len(units) / columns) if units else 0
+            for index, e in enumerate(units):
+                row, column = divmod(index, columns)
+                goal = (
+                    clamp(wx + (column - (columns - 1) / 2) * TILE * 2, TILE, WORLD_W - TILE),
+                    clamp(wy + (row - (rows - 1) / 2) * TILE * 2, TILE, WORLD_H - TILE),
+                )
+                e.state = "move"
+                e.target_id = None
+                e.path = self.nav_grid.find_path((e.x + e.w / 2, e.y + e.h / 2), goal)
+                e.path_goal = goal
+            if units:
+                self.play_sfx("move")
 
-    def update_volumes(self):
-        # Update sound volumes
-        for key, sound in self.sounds.items():
-            if self.muted:
-                sound.set_volume(0)
-            else:
-                vol = 0.28 if key in ("menu_music", "theme") else 0.45
-                sound.set_volume(vol * self.sfx_volume)
-        # Update active music channel
-        self.update_music_volume()
+    def finish_selection(self):
+        if not self.drag_start:
+            return
+        
+        x1, y1 = self.drag_start
+        x2, y2 = self.drag_pos or self.drag_start
+        
+        rect = pygame.Rect(min(x1, x2), min(y1, y2), abs(x1-x2), abs(y1-y2))
+        is_click = abs(x2 - x1) <= 4 and abs(y2 - y1) <= 4
+        
+        self.selected_ids = []
+        for entity in self.entities:
+            entity.selected = False
+        closest = None
+        closest_distance = 14
+        for e in self.entities:
+            if e.kind == "unit" and e.team == TEAM_RED:
+                sx = (e.x + e.w/2 - self.camera.x) * self.camera.zoom + VIEW_W / 2
+                sy = (e.y + e.h/2 - self.camera.y) * self.camera.zoom + TOP_H + VIEW_H / 2
+                if is_click:
+                    distance = math.hypot(sx - x2, sy - y2)
+                    if distance < closest_distance:
+                        closest = e
+                        closest_distance = distance
+                elif rect.collidepoint(sx, sy):
+                    self.selected_ids.append(e.id)
+                    e.selected = True
+        if closest:
+            self.selected_ids.append(closest.id)
+            closest.selected = True
 
-    def create_fallback_map(self):
-        """Generate a clean, minimal background map"""
-        surface = pygame.Surface((WORLD_W, WORLD_H))
+    def place_building(self, pos):
+        # Convert screen pos to world pos
+        wx = (pos[0] - VIEW_W / 2) / self.camera.zoom + self.camera.x
+        wy = (pos[1] - TOP_H - VIEW_H / 2) / self.camera.zoom + self.camera.y
         
-        # Simple solid background
-        surface.fill((35, 45, 32))
+        # Snap to grid
+        gx, gy = wx // TILE, wy // TILE
+        bx, by = gx * TILE, gy * TILE
         
-        # Optional: Add very subtle grid for tactical feel (remove if you want it completely blank)
-        grid_color = (28, 36, 25)
-        for x in range(0, WORLD_W, TILE * 8):
-            pygame.draw.line(surface, grid_color, (x, 0), (x, WORLD_H), 1)
-        for y in range(0, WORLD_H, TILE * 8):
-            pygame.draw.line(surface, grid_color, (0, y), (WORLD_W, y), 1)
+        data = STRUCT_DEFS[self.placing]
+        bw = data.get("w_tiles", data["size"]) * TILE
+        bh = data.get("h_tiles", data["size"]) * TILE
+        rect = pygame.Rect(bx, by, bw, bh)
         
-        return surface
+        if self.credits < data["cost"]:
+            self.play_sfx("insufficient")
+            return
 
-    def start(self, difficulty):
-        self.difficulty = difficulty
-        self.entities.clear()
-        self.ore.clear()
-        self.particles.clear()
-        self.tesla_zaps.clear()
-        self.selected_ids.clear()
-        self.training_queue.clear()
+        if not self.nav_grid.rect_walkable_for_building(rect):
+            return
+
+        # Create structure
+        e = Entity(
+            id=self.uid(),
+            kind="structure",
+            type=self.placing,
+            team=TEAM_RED,
+            x=float(bx),
+            y=float(by),
+            w=float(bw),
+            h=float(bh),
+            hp=float(data["hp"]),
+            max_hp=float(data["hp"]),
+            pw=data["pw"],
+            color=data["color"]
+        )
+        self.entities.append(e)
+        self.credits -= data["cost"]
+        self.nav_grid.rebuild_building_occupancy(self.entities)
+        self.play_sfx("build_start")
+        self.placing = None
+
+    def train_unit(self, unit_type):
+        data = UNIT_DEFS[unit_type]
+        if self.credits < data["cost"]:
+            self.play_sfx("insufficient")
+            return
+        
+        # Check requirements
+        if unit_type in ("conscript", "dog", "tesla_trooper"):
+            if not any(e.type == "barracks" for e in self.entities if e.team == TEAM_RED):
+                return
+        if unit_type in ("rhino", "v3", "apocalypse"):
+            if not any(e.type == "warfactory" for e in self.entities if e.team == TEAM_RED):
+                return
+
+        self.credits -= data["cost"]
+        self.training_queue.append(unit_type)
+        self.play_sfx("click")
+
+    def start_repair(self, pos):
+        wx = (pos[0] - VIEW_W / 2) / self.camera.zoom + self.camera.x
+        wy = (pos[1] - TOP_H - VIEW_H / 2) / self.camera.zoom + self.camera.y
+        for e in self.entities:
+            if e.kind == "structure" and e.team == TEAM_RED and e.rect().collidepoint(wx, wy):
+                self.repair_target_id = e.id
+                self.repair_mode = False
+                self.repair_timer = 0
+                return
+        self.repair_mode = False
+
+    def start_sell(self, pos):
+        wx = (pos[0] - VIEW_W / 2) / self.camera.zoom + self.camera.x
+        wy = (pos[1] - TOP_H - VIEW_H / 2) / self.camera.zoom + self.camera.y
+        for e in self.entities:
+            if e.kind == "structure" and e.team == TEAM_RED and e.rect().collidepoint(wx, wy):
+                self.sell_entity(e)
+                self.sell_mode = False
+                return
+        self.sell_mode = False
+
+    def sell_selected(self):
+        for eid in self.selected_ids:
+            for e in self.entities:
+                if e.id == eid and e.kind == "structure" and e.team == TEAM_RED:
+                    self.sell_entity(e)
+        self.selected_ids = []
+
+    def sell_entity(self, e):
+        data = STRUCT_DEFS[e.type]
+        self.credits += int(data["cost"] * 0.5)
+        e.hp = 0
+        self.nav_grid.rebuild_building_occupancy(self.entities)
+        self.play_sfx("cancel")
+
+    def reset_game(self):
+        self.difficulty = None
+        self.entities = []
+        self.ore = []
+        self.selected_ids = []
+        self.training_queue = []
+        self.training_timer = 0
+        self.wave_timer = 0
+        self.paused = False
+        self.placing = None
+        self.repair_mode = False
+        self.repair_target_id = None
+        self.sell_mode = False
+        self.credits = 2000
+        self.game_over = False
+        self.winner = None
         self.next_id = 1
-        self.credits = DIFFICULTIES[difficulty]["start_credits"]
+        self.wave = 1
+        self.nav_grid.rebuild_building_occupancy(self.entities)
+
+    def start_game(self, diff_key):
+        self.difficulty = diff_key
+        diff = DIFFICULTIES[diff_key]
+        self.credits = diff["start_credits"]
+
+        self.entities = []
+        self.ore = []
+        self.selected_ids = []
+        self.training_queue = []
+        self.training_timer = 0
         self.wave = 1
         self.wave_timer = 0
-        self.refinery_timer = 0
-        self.training_timer = 0
-        self.radar_timer = 0
         self.paused = False
         self.game_over = False
         self.winner = None
         self.placing = None
         self.repair_mode = False
         self.repair_target_id = None
-        self.repair_timer = 0
         self.sell_mode = False
-        self.camera = Camera(360, 620, 1.0)
-        self.message = "Awaiting orders, Commander."
-        self.message_timer = 4
-        self.command_voice_timer = 0
-        self.base_warning_timer = 0
-        self.active_tab = "bldg"
-        try:
-            self.music("theme")
-            self.play("yes_commander")
-        except Exception:
-            pass
+        self.next_id = 1
+        self.camera = Camera(x=WORLD_W / 2, y=WORLD_H / 2, zoom=0.72)
 
-        nav_mask_path = os.path.join(BASE_DIR, "nav_mask.pkl")
-        if _HAS_NAV_MASK and os.path.exists(nav_mask_path):
-            try:
-                loaded = nav_mask.load_nav_mask(nav_mask_path)
-                for gy in range(min(loaded.shape[0], self.nav_grid.rows)):
-                    for gx in range(min(loaded.shape[1], self.nav_grid.cols)):
-                        self.nav_grid.static_blocked[gy][gx] = bool(loaded[gy, gx])
-            except Exception:
-                self.nav_grid.generate_from_map(self.map_surface)
-        else:
-            self.nav_grid.generate_from_map(self.map_surface)
-        for data in [
-            ("conyard", 6, 34, TEAM_RED),
-            ("barracks", 14, 34, TEAM_RED),
-            ("refinery", 6, 40, TEAM_RED),
-            ("turret", 22, 34, TEAM_RED),
-            ("turret", 22, 40, TEAM_RED),
-            ("conyard", 66, 4, TEAM_BLUE),
-            ("barracks", 74, 4, TEAM_BLUE),
-            ("refinery", 66, 10, TEAM_BLUE),
-            ("turret", 58, 4, TEAM_BLUE),
-            ("turret", 58, 10, TEAM_BLUE),
-        ]:
-            self.entities.append(self.spawn_structure(*data))
-        self.refresh_navigation()
+        self.add_structure("barracks", TEAM_RED, 200, 480)
+        self.add_structure("conyard", TEAM_RED, 300, 600)
+        self.add_structure("powerplant", TEAM_RED, 200, 640)
+        self.add_structure("warfactory", TEAM_RED, 500, 480)
+        for unit_type, x, y in (
+            ("conscript", 440, 590),
+            ("conscript", 450, 630),
+            ("rhino", 500, 650),
+        ):
+            self.add_unit(unit_type, TEAM_RED, x, y)
 
-        for i in range(5):
-            self.entities.append(self.spawn_unit("conscript", 200 + i * 25, 600 + (i % 2) * 30, TEAM_RED))
-            self.entities.append(self.spawn_unit("gi", 1300 - i * 25, 120 + (i % 2) * 30, TEAM_BLUE))
-        self.entities.append(self.spawn_unit("rhino", 300, 650, TEAM_RED))
-        self.entities.append(self.spawn_unit("grizzly", 1400, 250, TEAM_BLUE))
-        self.create_ore(7)
-        self.recalc_power()
+        self.add_structure("barracks", TEAM_BLUE, 1120, 140)
+        self.add_structure("conyard", TEAM_BLUE, 1240, 120)
+        self.add_structure("powerplant", TEAM_BLUE, 1400, 140)
+        self.add_structure("warfactory", TEAM_BLUE, 1240, 280)
+        for unit_type, x, y in (
+            ("gi", 1160, 260),
+            ("gi", 1370, 250),
+            ("grizzly", 1300, 440),
+        ):
+            self.add_unit(unit_type, TEAM_BLUE, x, y)
 
-    def refresh_navigation(self):
         self.nav_grid.rebuild_building_occupancy(self.entities)
+        
+        # Spawn some ore
+        for _ in range(15):
+            self.ore.append(Ore(random.randint(100, WORLD_W-100), random.randint(100, WORLD_H-100)))
+            
+        self.play_music("theme")
+        self.message = f"Battle Started: {diff['label']} Difficulty"
+        self.message_timer = 3.0
 
-    def set_unit_destination(self, unit, wx, wy):
-        unit.tx = clamp(wx, 0, WORLD_W - 1)
-        unit.ty = clamp(wy, 0, WORLD_H - 1)
-        unit.path_goal = (unit.tx, unit.ty)
-        unit.path = self.nav_grid.find_path((unit.x, unit.y), unit.path_goal)
-        if unit.path:
-            unit.tx, unit.ty = unit.path[-1]
-            unit.path_goal = (unit.tx, unit.ty)
-        if not unit.path and self.nav_grid.is_walkable_world(unit.tx, unit.ty):
-            unit.path = [(unit.tx, unit.ty)]
+    def add_structure(self, structure_type, team, x, y):
+        data = STRUCT_DEFS[structure_type]
+        entity = Entity(
+            id=self.uid(),
+            kind="structure",
+            type=structure_type,
+            team=team,
+            x=x,
+            y=y,
+            w=data.get("w_tiles", data["size"]) * TILE,
+            h=data.get("h_tiles", data["size"]) * TILE,
+            hp=data["hp"],
+            max_hp=data["hp"],
+            pw=data["pw"],
+            color=data["color"],
+        )
+        self.entities.append(entity)
 
-    def spawn_unit(self, unit_type, x, y, team):
+    def update(self, dt):
+        if self.difficulty is None or self.paused:
+            return
+
+        # 1. Training
+        if self.training_queue:
+            self.training_timer += dt
+            unit_type = self.training_queue[0]
+            data = UNIT_DEFS[unit_type]
+            train_time = max(3, data["cost"] / 200)
+            if self.training_timer >= train_time:
+                if self.spawn_unit(unit_type):
+                    self.training_queue.pop(0)
+                    self.training_timer = 0
+                    self.play_sfx("unit_ready")
+
+        # 2. Wave System
+        self.wave_timer += dt
+        diff = DIFFICULTIES[self.difficulty]
+        if self.wave_timer >= diff["wave_interval"]:
+            self.spawn_wave()
+            self.wave_timer = 0
+            self.wave += 1
+            self.play_sfx("base_danger")
+
+        # 3. Entity Updates
+        for e in self.entities[:]:
+            if e.hp <= 0:
+                if e.kind == "structure" and e.type == "conyard":
+                    if e.team == TEAM_RED:
+                        self.game_over = True
+                        self.winner = TEAM_BLUE
+                    else:
+                        self.game_over = True
+                        self.winner = TEAM_RED
+                self.entities.remove(e)
+                self.nav_grid.rebuild_building_occupancy(self.entities)
+                continue
+
+            if e.kind == "unit":
+                # Simple AI for enemies
+                if e.team == TEAM_BLUE:
+                    if e.state == "idle":
+                        target = self.closest_visible_enemy(e)
+                        if target is None:
+                            target = next((s for s in self.entities if s.type == "conyard" and s.team == TEAM_RED), None)
+                        if target:
+                            e.state = "attack"
+                            e.target_id = target.id
+                            e.path_goal = (target.x + target.w/2, target.y + target.h/2)
+                            e.path = self.nav_grid.find_path((e.x + e.w/2, e.y + e.h/2), e.path_goal)
+                    elif e.state == "attack":
+                        current_target = next((t for t in self.entities if t.id == e.target_id), None)
+                        threat = self.closest_visible_enemy(e)
+                        if current_target and current_target.kind == "structure" and threat and threat.kind == "unit":
+                            e.target_id = threat.id
+                            e.path_goal = (threat.x + threat.w/2, threat.y + threat.h/2)
+                            e.path = []
+                    
+                    if e.state == "attack" and e.target_id:
+                        target = next((t for t in self.entities if t.id == e.target_id), None)
+                        if not target or target.hp <= 0:
+                            e.state = "idle"
+                        elif entity_distance(e, target) < e.range:
+                            e.atk_timer += dt
+                            if e.atk_timer >= e.atk_spd:
+                                target.hp -= e.atk
+                                e.atk_timer = 0
+                                self.particles.append(Particle(target.x + target.w/2, target.y + target.h/2, 0, 0, 0.5, (255, 255, 255)))
+                        else:
+                            # Move towards target
+                            if not e.path:
+                                e.path = self.nav_grid.find_path((e.x + e.w/2, e.y + e.h/2), (target.x + target.w/2, target.y + target.h/2))
+                            self.advance_unit(e, dt)
+
+                # Red units
+                if e.team == TEAM_RED:
+                    if e.state == "idle":
+                        target = self.closest_visible_enemy(e)
+                        if target:
+                            e.state = "attack"
+                            e.target_id = target.id
+                            e.path_goal = (target.x + target.w/2, target.y + target.h/2)
+                            e.path = []
+                            if self.message_timer <= 0 or self.message != "ENEMY CONTACT - UNITS ENGAGING":
+                                self.message = "ENEMY CONTACT - UNITS ENGAGING"
+                                self.message_timer = 3.0
+                                self.play_sfx("base_danger")
+
+                    if e.state == "move" and e.path:
+                        self.advance_unit(e, dt)
+                        if not e.path:
+                            e.state = "idle"
+                    
+                    if e.state == "attack" and e.target_id:
+                        target = next((t for t in self.entities if t.id == e.target_id), None)
+                        if not target or target.hp <= 0:
+                            e.state = "idle"
+                        elif entity_distance(e, target) < e.range:
+                            e.atk_timer += dt
+                            if e.atk_timer >= e.atk_spd:
+                                target.hp -= e.atk
+                                e.atk_timer = 0
+                                self.particles.append(Particle(target.x + target.w/2, target.y + target.h/2, 0, 0, 0.5, (255, 255, 255)))
+                        else:
+                            if not e.path:
+                                e.path = self.nav_grid.find_path((e.x + e.w/2, e.y + e.h/2), (target.x + target.w/2, target.y + target.h/2))
+                            self.advance_unit(e, dt)
+
+        # 4. Auto-defenses (Tesla)
+        for e in self.entities:
+            if e.type in ("tesla", "turret") and e.hp > 0:
+                # Find closest enemy
+                closest = None
+                min_dist = e.range
+                for target in self.entities:
+                    if target.team == TEAM_BLUE and target.hp > 0:
+                        dist = entity_distance(e, target)
+                        if dist < min_dist:
+                            min_dist = dist
+                            closest = target
+                if closest:
+                    e.atk_timer += dt
+                    if e.atk_timer >= e.atk_spd:
+                        closest.hp -= e.atk
+                        e.atk_timer = 0
+                        self.tesla_zaps.append(TeslaZap([e.center(), closest.center()], 0.2, 0.2, (100, 200, 255)))
+
+        # Update particles
+        for p in self.particles[:]:
+            p.ttl -= dt
+            if p.ttl <= 0:
+                self.particles.remove(p)
+        for z in self.tesla_zaps[:]:
+            z.ttl -= dt
+            if z.ttl <= 0:
+                self.tesla_zaps.remove(z)
+
+        if self.message_timer > 0:
+            self.message_timer -= dt
+
+    def spawn_unit(self, unit_type):
+        # Spawn near conyard
+        cy = next((e for e in self.entities if e.type == "conyard" and e.team == TEAM_RED), None)
+        if not cy:
+            return False
+        
+        # Find random walkable spot near cy
+        for _ in range(10):
+            rx = cy.x + random.randint(-100, 100)
+            ry = cy.y + random.randint(-100, 100)
+            if self.nav_grid.is_walkable_world(rx, ry):
+                self.add_unit(unit_type, TEAM_RED, rx, ry)
+                return True
+        return False
+
+    def advance_unit(self, entity, dt):
+        if not entity.path:
+            return
+        gx, gy = entity.path[0]
+        dx, dy = gx - (entity.x + entity.w / 2), gy - (entity.y + entity.h / 2)
+        distance = math.hypot(dx, dy)
+        if distance <= 2:
+            entity.x = gx - entity.w / 2
+            entity.y = gy - entity.h / 2
+            entity.path.pop(0)
+            return
+        entity.facing = round(
+            (math.atan2(dy, dx) + math.pi / 2) / (math.pi / 4)
+        ) % 8
+        step = min(entity.spd * dt, distance)
+        entity.x += dx / distance * step
+        entity.y += dy / distance * step
+        if step == distance:
+            entity.x = gx - entity.w / 2
+            entity.y = gy - entity.h / 2
+            entity.path.pop(0)
+
+    def add_unit(self, unit_type, team, x, y):
         data = UNIT_DEFS[unit_type]
-        hp_mult = DIFFICULTIES[self.difficulty]["enemy_hp"] if team == TEAM_BLUE and self.difficulty else 1
-        atk_mult = DIFFICULTIES[self.difficulty]["enemy_atk"] if team == TEAM_BLUE and self.difficulty else 1
-        hp = data["hp"] * hp_mult
-        return Entity(
+        entity = Entity(
             id=self.uid(),
             kind="unit",
             type=unit_type,
             team=team,
             x=x,
             y=y,
-            hp=hp,
-            max_hp=hp,
-            atk=data["atk"] * atk_mult,
+            w=data["size"],
+            h=data["size"],
+            hp=data["hp"],
+            max_hp=data["hp"],
+            atk=data["atk"],
             atk_spd=data["atk_spd"],
             range=data["range"],
             sight=data["sight"],
             spd=data["spd"],
             size=data["size"],
             color=data["color"],
-            tx=x,
-            ty=y,
-            w=data["size"] * 2,
-            h=data["size"] * 2,
         )
-
-    def spawn_structure(self, struct_type, gx, gy, team):
-        data = STRUCT_DEFS[struct_type]
-        wt = data.get("w_tiles", data["size"])
-        ht = data.get("h_tiles", data["size"])
-        w = wt * TILE
-        h = ht * TILE
-        x = gx * TILE
-        y = gy * TILE
-        return Entity(
-            id=self.uid(),
-            kind="structure",
-            type=struct_type,
-            team=team,
-            x=x,
-            y=y,
-            w=w,
-            h=h,
-            hp=data["hp"],
-            max_hp=data["hp"],
-            atk=data.get("atk", 0),
-            atk_spd=data.get("atk_spd", 99),
-            range=data.get("range", 0),
-            sight=max(160, data.get("range", 0) * 1.5),
-            color=data["color"] if team == TEAM_RED else (55, 90, 185),
-            pw=data["pw"],
-            rally_x=x + w / 2 + 40,
-            rally_y=y + h + 20,
-        )
-
-    def create_ore(self, count):
-        for _ in range(count):
-            self.ore.append(self.random_ore())
-
-    def random_ore(self):
-        for _ in range(200):
-            x = random.randint(80, WORLD_W - 80)
-            y = random.randint(80, WORLD_H - 80)
-            if all(distance_xy(x, y, *e.center()) > 120 for e in self.entities):
-                if all(distance_xy(x, y, o.x, o.y) > 120 for o in self.ore):
-                    return Ore(x, y)
-        return Ore(random.randint(80, WORLD_W - 80), random.randint(80, WORLD_H - 80))
-
-    def entity_by_id(self, entity_id):
-        for entity in self.entities:
-            if entity.id == entity_id:
-                return entity
-        return None
-
-    def selected(self):
-        return [e for e in self.entities if e.id in self.selected_ids]
-
-    def alert(self, message, seconds=3):
-        self.message = message
-        self.message_timer = seconds
-
-    def update(self, dt):
-        if not self.difficulty or self.paused or self.game_over:
-            if not self.difficulty:
-                self.music("menu_music")
-                pressed = pygame.mouse.get_pressed()
-                any_down = pressed[0] or pressed[1] or pressed[2]
-                if any_down and not self._menu_was_pressed:
-                    mx, my = pygame.mouse.get_pos()
-                    for key, rect in self.menu_cards():
-                        if rect.collidepoint(mx, my):
-                            self.start(key)
-                            break
-                self._menu_was_pressed = any_down
-            self.update_particles(dt)
-            return
-
-        self.handle_camera_keys(dt)
-        self.command_voice_timer = max(0, self.command_voice_timer - dt)
-        self.base_warning_timer = max(0, self.base_warning_timer - dt)
-        self.refinery_timer += dt
-        if self.refinery_timer >= 5:
-            self.refinery_timer = 0
-            refineries = [e for e in self.entities if e.kind == "structure" and e.team == TEAM_RED and e.type == "refinery"]
-            if refineries:
-                self.credits = min(99999, self.credits + 200 * len(refineries))
-                self.alert(f"+${200 * len(refineries)} credits")
-
-        self.wave_timer += dt
-        interval = DIFFICULTIES[self.difficulty]["wave_interval"]
-        if self.wave_timer >= interval:
-            self.wave_timer = 0
-            self.spawn_wave()
-            self.wave += 1
-
-        self.update_training(dt)
-        self.update_ore(dt)
-        self.update_radar_heal(dt)
-        self.update_repair(dt)
-        for entity in list(self.entities):
-            self.update_combat(entity, dt)
-            if entity.kind == "unit":
-                self.update_movement(entity, dt)
-        self.remove_dead()
-        self.recalc_power()
-        self.update_particles(dt)
-        self.update_tesla_zaps(dt)
-        if self.message_timer > 0:
-            self.message_timer -= dt
-
-    def handle_camera_keys(self, dt):
-        keys = pygame.key.get_pressed()
-        speed = 520 / self.camera.zoom
-        
-        # Keyboard panning (Arrow keys or IJKL keys)
-        if keys[pygame.K_LEFT] or keys[pygame.K_j]:
-            self.camera.x -= speed * dt
-        if keys[pygame.K_RIGHT] or keys[pygame.K_l]:
-            self.camera.x += speed * dt
-        if keys[pygame.K_UP] or keys[pygame.K_i]:
-            self.camera.y -= speed * dt
-        if keys[pygame.K_DOWN] or keys[pygame.K_k]:
-            self.camera.y += speed * dt
-            
-        # Mouse edge scrolling
-        if pygame.mouse.get_focused():
-            mx, my = pygame.mouse.get_pos()
-            margin = 20
-            if mx < margin:
-                self.camera.x -= speed * dt
-            elif mx > SCREEN_W - margin:
-                self.camera.x += speed * dt
-            if my < margin:
-                self.camera.y -= speed * dt
-            elif my > SCREEN_H - margin:
-                self.camera.y += speed * dt
-                
-        self.clamp_camera()
-
-    def update_training(self, dt):
-        if not self.training_queue:
-            return
-        unit_type = self.training_queue[0]
-        train_time = max(3, UNIT_DEFS[unit_type]["cost"] / 200)
-        self.training_timer += dt
-        if self.training_timer >= train_time:
-            self.training_timer = 0
-            self.training_queue.pop(0)
-            self.release_trained_unit(unit_type)
-            self.alert(f"{UNIT_DEFS[unit_type]['name']} ready")
-            self.play("unit_ready")
-
-    def producer_type_for_unit(self, unit_type):
-        return "warfactory" if UNIT_DEFS[unit_type]["category"] == "vehicle" else "barracks"
-
-    def find_producer(self, unit_type, team=TEAM_RED):
-        producer_type = self.producer_type_for_unit(unit_type)
-        return next((e for e in self.entities if e.team == team and e.type == producer_type), None)
-
-    def release_trained_unit(self, unit_type):
-        producer = self.find_producer(unit_type)
-        exit_x, exit_y, rally_x, rally_y = self.production_exit_points(producer, unit_type)
-        unit = self.spawn_unit(unit_type, exit_x, exit_y, TEAM_RED)
-        unit.state = "move"
-        self.entities.append(unit)
-        self.set_unit_destination(unit, rally_x, rally_y)
-
-        if producer:
-            label = "VEHICLE BAY" if producer.type == "warfactory" else "INFANTRY EXIT"
-            color = (255, 190, 70) if producer.type == "warfactory" else (120, 230, 255)
-            self.add_burst(exit_x, exit_y, color, 12)
-            self.particles.append(Particle(producer.x + producer.w / 2, producer.y - 12, 0, -18, 1.1, color, 1, label))
-
-    def production_exit_points(self, producer, unit_type):
-        size = UNIT_DEFS[unit_type]["size"]
-        if not producer:
-            exit_x, exit_y = 300, 650
-            return exit_x, exit_y, exit_x + 80, exit_y + 40
-
-        exit_x = producer.x + producer.w / 2
-        exit_y = producer.y + producer.h + size + NAV_TILE + 4
-        if producer.type == "warfactory":
-            exit_y = producer.y + producer.h + size + NAV_TILE + 10
-            rally_x = exit_x + 95
-            rally_y = exit_y + 35
-        else:
-            rally_x = exit_x + 55
-            rally_y = exit_y + 55
-
-        exit_x = clamp(exit_x, size, WORLD_W - size)
-        exit_y = clamp(exit_y, size, WORLD_H - size)
-        rally_x = clamp(rally_x, size, WORLD_W - size)
-        rally_y = clamp(rally_y, size, WORLD_H - size)
-        exit_x, exit_y = self.nearest_walkable_release_point(exit_x, exit_y, size)
-        return exit_x, exit_y, rally_x, rally_y
-
-    def nearest_walkable_release_point(self, x, y, size):
-        if self.nav_grid.is_walkable_world(x, y):
-            return x, y
-
-        start_gx, start_gy = self.nav_grid.cell(x, y)
-        nearest = self.nav_grid.nearest_walkable_cell(start_gx, start_gy, 12)
-        if nearest:
-            nx, ny = self.nav_grid.cell_center(*nearest)
-            return clamp(nx, size, WORLD_W - size), clamp(ny, size, WORLD_H - size)
-
-        for radius in range(1, 9):
-            for dx in range(-radius, radius + 1):
-                for dy in (-radius, radius):
-                    nx = clamp(x + dx * NAV_TILE, size, WORLD_W - size)
-                    ny = clamp(y + dy * NAV_TILE, size, WORLD_H - size)
-                    if self.nav_grid.is_walkable_world(nx, ny):
-                        return nx, ny
-            for dy in range(-radius + 1, radius):
-                for dx in (-radius, radius):
-                    nx = clamp(x + dx * NAV_TILE, size, WORLD_W - size)
-                    ny = clamp(y + dy * NAV_TILE, size, WORLD_H - size)
-                    if self.nav_grid.is_walkable_world(nx, ny):
-                        return nx, ny
-        return x, y
-
-    def update_ore(self, dt):
-        for ore in self.ore:
-            if not ore.available:
-                ore.respawn -= dt
-                if ore.respawn <= 0:
-                    new_ore = self.random_ore()
-                    ore.x = new_ore.x
-                    ore.y = new_ore.y
-                    ore.available = True
-                continue
-            for entity in self.entities:
-                if entity.kind == "unit" and distance_xy(entity.x, entity.y, ore.x, ore.y) < 26:
-                    if entity.team == TEAM_RED:
-                        self.credits = min(99999, self.credits + 200)
-                        self.alert("+$200 ore collected")
-                    ore.available = False
-                    ore.respawn = 40
-                    break
-
-    def update_radar_heal(self, dt):
-        self.radar_timer += dt
-        if self.radar_timer < 0.5:
-            return
-        self.radar_timer = 0
-        radars = [e for e in self.entities if e.kind == "structure" and e.team == TEAM_RED and e.type == "radar"]
-        if not radars:
-            return
-        for entity in self.entities:
-            if entity.team == TEAM_RED and entity.hp < entity.max_hp:
-                if any(entity_distance(entity, radar) < 300 for radar in radars):
-                    entity.hp = min(entity.max_hp, entity.hp + 3)
-
-    def update_repair(self, dt):
-        if not self.repair_target_id:
-            return
-        target = self.entity_by_id(self.repair_target_id)
-        if not target or target.kind != "structure" or target.team != TEAM_RED:
-            self.repair_target_id = None
-            return
-        if target.hp >= target.max_hp:
-            self.repair_target_id = None
-            self.alert("Repairs complete")
-            return
-
-        self.repair_timer -= dt
-        if self.repair_timer > 0:
-            return
-        if self.credits < REPAIR_COST:
-            self.repair_target_id = None
-            self.alert("Insufficient credits for repair")
-            self.play("insufficient")
-            return
-
-        self.credits -= REPAIR_COST
-        target.hp = min(target.max_hp, target.hp + REPAIR_HP)
-        self.repair_timer = REPAIR_INTERVAL
-        cx, cy = target.center()
-        self.particles.append(Particle(cx, target.y - 8, 0, -16, 0.55, (120, 235, 255), 1, f"+{REPAIR_HP} HP"))
-
-    def update_combat(self, entity, dt):
-        if entity.atk <= 0:
-            return
-        entity.atk_timer = max(0, entity.atk_timer - dt)
-        target = self.entity_by_id(entity.target_id) if entity.target_id else None
-        if entity.kind == "unit" and entity.state == "move" and not entity.attack_move and not target:
-            return
-        if not target or target.hp <= 0:
-            target = self.find_target(entity)
-            entity.target_id = target.id if target else None
-        if not target:
-            return
-        d = entity_distance(entity, target)
-        if d <= entity.range:
-            if entity.kind == "unit":
-                entity.tx = entity.x
-                entity.ty = entity.y
-                entity.path.clear()
-                entity.path_goal = None
-            if entity.atk_timer <= 0:
-                dmg = entity.atk * (1.3 if self.has_radar_buff(entity) else 1)
-                target.hp -= dmg
-                if target.team == TEAM_RED and target.kind == "structure" and self.base_warning_timer <= 0:
-                    self.play("base_danger")
-                    self.base_warning_timer = 12
-                entity.atk_timer = entity.atk_spd
-                tx, ty = target.center()
-                if self.is_tesla_attacker(entity):
-                    self.add_tesla_zap(entity, target)
-                else:
-                    self.add_burst(tx, ty, (255, 190, 80), 5)
-                self.particles.append(Particle(tx, ty - 12, 0, -20, 0.7, (255, 230, 150), 1, str(round(dmg))))
-                if target.kind == "unit" and target.team == TEAM_RED and not target.target_id:
-                    target.target_id = entity.id
-                    target.state = "attack"
-        elif entity.kind == "unit" and (entity.attack_move or entity.state == "attack"):
-            goal = target.center()
-            if not entity.path_goal or distance_xy(entity.path_goal[0], entity.path_goal[1], *goal) > NAV_TILE * 2:
-                self.set_unit_destination(entity, *goal)
-
-    def find_target(self, entity):
-        enemies = [e for e in self.entities if e.team != entity.team and e.hp > 0]
-        if entity.team == TEAM_BLUE and entity.state == "attack":
-            return min(enemies, key=lambda e: entity_distance(entity, e) * (0.85 if e.kind == "structure" else 1), default=None)
-        sight = entity.sight * (1.5 if self.has_radar_buff(entity) else 1)
-        nearby = [e for e in enemies if entity_distance(entity, e) <= sight]
-        return min(nearby, key=lambda e: entity_distance(entity, e), default=None)
-
-    def has_radar_buff(self, entity):
-        if entity.team != TEAM_RED:
-            return False
-        return any(e.team == TEAM_RED and e.type == "radar" and entity_distance(entity, e) < 300 for e in self.entities)
-
-    def update_movement(self, unit, dt):
-        if not unit.path and unit.path_goal and distance_xy(unit.x, unit.y, *unit.path_goal) > NAV_TILE:
-            unit.path = self.nav_grid.find_path((unit.x, unit.y), unit.path_goal)
-        wx, wy = unit.path[0] if unit.path else (unit.tx, unit.ty)
-        dx = wx - unit.x
-        dy = wy - unit.y
-        d = math.hypot(dx, dy)
-        if d < 2:
-            unit.x = wx
-            unit.y = wy
-            if unit.path:
-                unit.path.pop(0)
-            if not unit.path and distance_xy(unit.x, unit.y, unit.tx, unit.ty) <= NAV_TILE:
-                unit.path_goal = None
-                unit.state = "idle"
-            return
-        unit.facing = math.atan2(dy, dx)
-        step = min(d, unit.spd * dt)
-        nx = unit.x + dx / d * step
-        ny = unit.y + dy / d * step
-        if self.walkable(nx, ny, unit):
-            unit.x = nx
-            unit.y = ny
-        else:
-            unit.path = self.nav_grid.find_path((unit.x, unit.y), (unit.tx, unit.ty))
-            if not unit.path:
-                unit.tx = unit.x
-                unit.ty = unit.y
-                unit.path_goal = None
-                unit.state = "idle"
-        unit.x = clamp(unit.x, 0, WORLD_W)
-        unit.y = clamp(unit.y, 0, WORLD_H)
-
-    def walkable(self, x, y, unit=None):
-        return self.nav_grid.is_walkable_world(x, y)
-
-    def remove_dead(self):
-        dead = [e for e in self.entities if e.hp <= 0]
-        for entity in dead:
-            x, y = entity.center()
-            self.add_burst(x, y, (255, 75, 30), 18)
-            if entity.team == TEAM_BLUE and entity.kind == "unit":
-                self.credits = min(99999, self.credits + 50)
-        self.entities = [e for e in self.entities if e.hp > 0]
-        if any(e.kind == "structure" for e in dead):
-            self.refresh_navigation()
-        live_ids = {e.id for e in self.entities}
-        self.selected_ids = [entity_id for entity_id in self.selected_ids if entity_id in live_ids]
-        soviet_cy = any(e.team == TEAM_RED and e.type == "conyard" for e in self.entities)
-        allied_cy = any(e.team == TEAM_BLUE and e.type == "conyard" for e in self.entities)
-        if not soviet_cy:
-            self.end_game(TEAM_BLUE)
-        elif not allied_cy:
-            self.end_game(TEAM_RED)
-
-    def end_game(self, winner):
-        if self.game_over:
-            return
-        self.winner = winner
-        self.game_over = True
-        if self.music_channel:
-            self.music_channel.stop()
-        self.music_mode = None
-        for sound in self.sounds.values():
-            try:
-                sound.stop()
-            except Exception:
-                pass
-        self.play("victory" if winner == TEAM_RED else "defeat")
-        self.alert("Victory! The Allied base has fallen." if winner == TEAM_RED else "Defeat! Construction Yard destroyed.", 99)
+        self.entities.append(entity)
 
     def spawn_wave(self):
         diff = DIFFICULTIES[self.difficulty]
-        count = min(diff["enemy_count_base"] + self.wave * diff["enemy_count_per_wave"], diff["max_wave_count"])
-        types = self.wave_types()
+        count = diff["enemy_count_base"] + (self.wave * diff["enemy_count_per_wave"])
+        
+        # Spawn enemies at the edge
         for _ in range(count):
-            unit_type = random.choice(types)
-            unit = self.spawn_unit(unit_type, WORLD_W - 210 + random.uniform(-100, 100), 120 + random.uniform(-50, 180), TEAM_BLUE)
-            unit.state = "attack"
-            unit.attack_move = True
-            self.set_unit_destination(unit, 150 + random.uniform(-40, 360), 690 + random.uniform(-40, 140))
-            self.entities.append(unit)
-        self.alert(f"Enemy attack! Wave {self.wave}", 4)
-        self.play("base_danger")
-
-    def wave_types(self):
-        if self.wave <= 2:
-            return ["gi"]
-        if self.wave <= 4:
-            return ["gi", "gi", "grizzly"]
-        if self.wave <= 6:
-            return ["gi", "grizzly", "grizzly"]
-        if self.wave <= 8:
-            return ["grizzly", "prism", "gi"]
-        return ["grizzly", "prism", "apocalypse", "v3"]
-
-    def recalc_power(self):
-        self.power = 10 + sum(e.pw for e in self.entities if e.kind == "structure" and e.team == TEAM_RED)
-
-    def add_burst(self, x, y, color, count):
-        for _ in range(count):
-            angle = random.random() * math.tau
-            speed = random.uniform(20, 90)
-            self.particles.append(Particle(x, y, math.cos(angle) * speed, math.sin(angle) * speed, random.uniform(0.25, 0.75), color, random.uniform(2, 5)))
-
-    def is_tesla_attacker(self, entity):
-        return entity.type in ("tesla", "turret", "tesla_trooper")
-
-    def zap_origin(self, entity):
-        if entity.kind == "structure":
-            cx, cy = entity.center()
-            return cx, entity.y + entity.h * 0.18
-        return entity.x, entity.y - entity.size * 0.45
-
-    def add_tesla_zap(self, source, target):
-        sx, sy = self.zap_origin(source)
-        tx, ty = target.center()
-        segments = max(5, min(12, round(distance_xy(sx, sy, tx, ty) / 28)))
-        dx = tx - sx
-        dy = ty - sy
-        length = max(1, math.hypot(dx, dy))
-        nx = -dy / length
-        ny = dx / length
-        points = []
-        for i in range(segments + 1):
-            t = i / segments
-            jitter = 0 if i in (0, segments) else random.uniform(-12, 12)
-            points.append((sx + dx * t + nx * jitter, sy + dy * t + ny * jitter))
-        color = (135, 225, 255) if source.type != "tesla" else (190, 245, 255)
-        self.tesla_zaps.append(TeslaZap(points, 0.18, 0.18, color, 4 if source.type == "tesla" else 3))
-        self.tesla_zaps.append(TeslaZap(points[::2] if len(points) > 4 else points, 0.10, 0.10, (255, 255, 255), 2))
-        self.add_burst(tx, ty, (120, 225, 255), 10)
-        for _ in range(5):
-            angle = random.random() * math.tau
-            speed = random.uniform(45, 130)
-            self.particles.append(Particle(tx, ty, math.cos(angle) * speed, math.sin(angle) * speed, random.uniform(0.12, 0.32), (205, 245, 255), random.uniform(2, 4)))
-
-    def update_tesla_zaps(self, dt):
-        for zap in self.tesla_zaps:
-            zap.ttl -= dt
-        self.tesla_zaps = [zap for zap in self.tesla_zaps if zap.ttl > 0]
-
-    def update_particles(self, dt):
-        for particle in self.particles:
-            particle.x += particle.vx * dt
-            particle.y += particle.vy * dt
-            particle.ttl -= dt
-        self.particles = [p for p in self.particles if p.ttl > 0]
-
-    def try_build(self, struct_type):
-        if not self.difficulty or self.game_over:
-            return
-        data = STRUCT_DEFS[struct_type]
-        if self.credits < data["cost"]:
-            self.alert("Insufficient credits")
-            self.play("insufficient")
-            return
-        self.repair_mode = False
-        self.repair_target_id = None
-        self.sell_mode = False
-        self.placing = struct_type
-        self.alert(f"Place {data['name']} with left click")
-        self.play("new_options")
-
-    def place_structure(self, wx, wy):
-        if not self.placing:
-            return
-        data = STRUCT_DEFS[self.placing]
-        gx = int(wx // TILE)
-        gy = int(wy // TILE)
-        wt = data.get("w_tiles", data["size"])
-        ht = data.get("h_tiles", data["size"])
-        rect = pygame.Rect(gx * TILE, gy * TILE, wt * TILE, ht * TILE)
-        if rect.left < 0 or rect.top < 0 or rect.right > WORLD_W or rect.bottom > WORLD_H:
-            self.alert("Cannot build here")
-            self.play("cancel")
-            return
-        if not self.nav_grid.rect_walkable_for_building(rect):
-            self.alert("Terrain blocked")
-            self.play("cancel")
-            return
-        for entity in self.entities:
-            if entity.kind == "structure" and rect.colliderect(entity.rect()):
-                self.alert("Space occupied")
-                self.play("cancel")
-                return
-        cx, cy = rect.center
-        if not any(e.kind == "structure" and e.team == TEAM_RED and distance_xy(cx, cy, *e.center()) < BUILD_RADIUS for e in self.entities):
-            self.alert("Build near your base")
-            self.play("cancel")
-            return
-        self.credits -= data["cost"]
-        self.entities.append(self.spawn_structure(self.placing, gx, gy, TEAM_RED))
-        self.refresh_navigation()
-        self.alert(f"{data['name']} constructed")
-        self.play("construction_done")
-        self.placing = None
-
-    def train_unit(self, unit_type):
-        if not self.difficulty or self.game_over:
-            return
-        data = UNIT_DEFS[unit_type]
-        if unit_type in ("conscript", "dog", "tesla_trooper"):
-            if not any(e.team == TEAM_RED and e.type == "barracks" for e in self.entities):
-                self.alert("Need Barracks")
-                self.play("cancel")
-                return
-        if unit_type in ("rhino", "v3", "apocalypse"):
-            if not any(e.team == TEAM_RED and e.type == "warfactory" for e in self.entities):
-                self.alert("Need War Factory")
-                self.play("cancel")
-                return
-        if self.credits < data["cost"]:
-            self.alert("Insufficient credits")
-            self.play("insufficient")
-            return
-        self.credits -= data["cost"]
-        self.training_queue.append(unit_type)
-        self.alert(f"Training {data['name']}")
-        self.play("build_start")
-
-    def screen_to_world(self, sx, sy):
-        vx = sx
-        vy = sy - TOP_H
-        wx = (vx - VIEW_W / 2) / self.camera.zoom + self.camera.x
-        wy = (vy - VIEW_H / 2) / self.camera.zoom + self.camera.y
-        return wx, wy
-
-    def world_to_screen(self, wx, wy):
-        sx = (wx - self.camera.x) * self.camera.zoom + VIEW_W / 2
-        sy = (wy - self.camera.y) * self.camera.zoom + VIEW_H / 2 + TOP_H
-        return sx, sy
-
-    def clamp_camera(self):
-        half_w = VIEW_W / 2 / self.camera.zoom
-        half_h = VIEW_H / 2 / self.camera.zoom
-        min_x, max_x = half_w, WORLD_W - half_w
-        min_y, max_y = half_h, WORLD_H - half_h
-        if min_x < max_x:
-            self.camera.x = clamp(self.camera.x, min_x, max_x)
-        if min_y < max_y:
-            self.camera.y = clamp(self.camera.y, min_y, max_y)
-
-    def event(self, event):
-        if event.type == pygame.QUIT:
-            pygame.mouse.set_visible(True)
-            pygame.quit()
-            sys.exit()
-        if event.type == pygame.KEYDOWN:
-            self.keydown(event.key)
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            self.play_cursor_click(event)
-
-        # 1. Handle clicks when game is paused (left-click only — block everything else)
-        if self.paused and self.difficulty:
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                # Top-bar pause button toggles resume
-                pause_rect = pygame.Rect(SCREEN_W - 38, 10, 26, 26)
-                if pause_rect.collidepoint(event.pos):
-                    self.paused = False
-                    self.play("affirmative")
-                    return
-                self.paused_click(event.pos)
-            # Swallow all other mouse events (right/middle/wheel/motion) so the
-            # world underneath the overlay cannot receive them.
-            return
-
-        if not self.difficulty:
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button in (1, 2, 3):
-                    mx, my = event.pos
-                    for key, rect in self.menu_cards():
-                        if rect.collidepoint(mx, my):
-                            self.start(key)
-                            break
-                return
-            self.menu_event(event)
-            return
-
-        # 2. Check if top-bar pause button is clicked
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            pause_rect = pygame.Rect(SCREEN_W - 38, 10, 26, 26)
-            if pause_rect.collidepoint(event.pos):
-                self.paused = True
-                self.play("hold")
-                return
-
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            self.mouse_down(event)
-        elif event.type == pygame.MOUSEBUTTONUP:
-            self.mouse_up(event)
-        elif event.type == pygame.MOUSEMOTION:
-            self.mouse_motion(event)
-
-    def paused_click(self, pos):
-        for btn in self.paused_buttons:
-            if btn.rect.collidepoint(pos):
-                if btn.action == "resume":
-                    self.paused = False
-                    self.play("affirmative")
-                elif btn.action == "mute":
-                    self.muted = not self.muted
-                    self.update_volumes()
-                elif btn.action == "vol_down":
-                    self.sfx_volume = clamp(self.sfx_volume - 0.1, 0.0, 1.0)
-                    self.muted = False  # changing volume implies the user wants sound
-                    self.update_volumes()
-                elif btn.action == "vol_up":
-                    self.sfx_volume = clamp(self.sfx_volume + 0.1, 0.0, 1.0)
-                    self.muted = False
-                    self.update_volumes()
-                elif btn.action == "quit":
-                    self.paused = False
-                    self.difficulty = None
-                    self.music("menu_music")
-                return
-
-    def keydown(self, key):
-        if not self.difficulty:
-            if key == pygame.K_1:
-                self.start("easy")
-            elif key == pygame.K_2:
-                self.start("medium")
-            elif key == pygame.K_3:
-                self.start("hard")
-            return
-        if key == pygame.K_ESCAPE:
-            self.placing = None
-            self.repair_mode = False
-            self.repair_target_id = None
-            self.sell_mode = False
-            self.paused = False
-            self.play("cancel")
-            return
-        elif key == pygame.K_p:
-            self.paused = not self.paused
-            self.play("hold" if self.paused else "affirmative")
-            return
-        elif key == pygame.K_g:
-            self.debug_nav = not self.debug_nav
-            self.alert("Navigation grid shown" if self.debug_nav else "Navigation grid hidden")
-            return
-        elif key == pygame.K_v:
-            self.show_nav_vis = not self.show_nav_vis
-            if self.show_nav_vis and self.nav_vis_surface is None and _HAS_NAV_MASK:
-                vis_path = os.path.join(BASE_DIR, "nav_mask_vis.png")
-                if os.path.exists(vis_path):
-                    try:
-                        self.nav_vis_surface = pygame.image.load(vis_path).convert()
-                    except pygame.error:
-                        pass
-            self.alert("Nav mask vis shown" if self.show_nav_vis else "Nav mask vis hidden")
-            return
-        elif key == pygame.K_r and self.game_over:
-            self.difficulty = None
-            self.game_over = False
-            self.music("menu_music")
-            return
-        elif key == pygame.K_DELETE:
-            self.sell_selected()
-            return
-        elif key == pygame.K_EQUALS or key == pygame.K_PLUS:
-            self.camera.zoom = min(1.8, self.camera.zoom + 0.1)
-            self.clamp_camera()
-            return
-        elif key == pygame.K_MINUS:
-            self.camera.zoom = max(0.55, self.camera.zoom - 0.1)
-            self.clamp_camera()
-            return
-        elif key == pygame.K_h:
-            self.activate_repair_tool()
-            return
-        elif key == pygame.K_x:
-            self.activate_sell_tool()
-            return
-
-        if pygame.K_a <= key <= pygame.K_z:
-            self.cheat_buffer += pygame.key.name(key)
-            if len(self.cheat_buffer) > 20:
-                self.cheat_buffer = self.cheat_buffer[-20:]
-            if self.cheat_buffer.endswith("win"):
-                self.cheat_buffer = ""
-                for e in list(self.entities):
-                    if e.team == TEAM_BLUE and e.kind == "structure":
-                        e.hp = 0
-                self.alert("Cheat activated: Victory")
-                return
-            elif self.cheat_buffer.endswith("los"):
-                self.cheat_buffer = ""
-                for e in list(self.entities):
-                    if e.team == TEAM_RED and e.kind == "structure":
-                        e.hp = 0
-                self.alert("Cheat activated: Defeat")
-                return
-            elif self.cheat_buffer.endswith("money"):
-                self.cheat_buffer = ""
-                self.credits += 100000
-                self.alert("Cheat activated: +100000 credits")
-                return
-        else:
-            self.cheat_buffer = ""
-
-        if key in BUILD_KEYS:
-            self.try_build(BUILD_KEYS[key])
-        elif key in TRAIN_KEYS:
-            self.train_unit(TRAIN_KEYS[key])
-
-    def sell_selected(self):
-        selected = [e for e in self.selected() if e.team == TEAM_RED and e.kind == "structure"]
-        if not selected:
-            self.alert("Select one of your buildings to sell")
-            self.play("cancel")
-            return
-        refund = 0
-        for entity in selected:
-            refund += int(STRUCT_DEFS[entity.type]["cost"] * 0.5)
-            entity.hp = 0
-        self.credits = min(99999, self.credits + refund)
-        self.alert(f"Sold for ${refund}")
-        self.play("construction_done")
-
-    def menu_event(self, event):
-        try:
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                    self.start("easy")
-                elif event.key in (pygame.K_1, pygame.K_KP_1):
-                    self.start("easy")
-                elif event.key in (pygame.K_2, pygame.K_KP_2):
-                    self.start("medium")
-                elif event.key in (pygame.K_3, pygame.K_KP_3):
-                    self.start("hard")
-                return
-            if event.type == pygame.MOUSEMOTION:
-                mx, my = event.pos
-                self.menu_hover_key = None
-                for key, rect in self.menu_cards():
-                    if rect.collidepoint(mx, my):
-                        self.menu_hover_key = key
-                        break
-                return
-        except Exception:
-            import traceback
-            traceback.print_exc()
-
-    def mouse_down(self, event):
-        mx, my = event.pos
-        if event.button == 4:
-            self.camera.zoom = min(1.8, self.camera.zoom + 0.08)
-            self.clamp_camera()
-            return
-        if event.button == 5:
-            self.camera.zoom = max(0.55, self.camera.zoom - 0.08)
-            self.clamp_camera()
-            return
-        if mx >= VIEW_W:
-            self.sidebar_click(mx, my)
-            return
-        if my < TOP_H or my > TOP_H + VIEW_H:
-            return
-        if event.button == 2:
-            self.panning = True
-            self.pan_start = event.pos
-            self.pan_cam = (self.camera.x, self.camera.y)
-        elif event.button == 3:
-            if self.repair_mode or self.sell_mode:
-                self.repair_mode = False
-                self.repair_target_id = None
-                self.sell_mode = False
-                self.play("cancel")
-                return
-            self.select_ids([])
-            return
-        elif event.button == 1:
-            if self.sell_mode:
-                self.sell_building_at(*self.screen_to_world(mx, my))
-                return
-            if self.repair_mode:
-                self.start_repair_at(*self.screen_to_world(mx, my))
-                return
-            if self.placing:
-                self.place_structure(*self.screen_to_world(mx, my))
-                return
-            self.drag_start = event.pos
-            self.drag_pos = event.pos
-
-    def mouse_motion(self, event):
-        if self.panning:
-            dx = event.pos[0] - self.pan_start[0]
-            dy = event.pos[1] - self.pan_start[1]
-            self.camera.x = self.pan_cam[0] - dx / self.camera.zoom
-            self.camera.y = self.pan_cam[1] - dy / self.camera.zoom
-            self.clamp_camera()
-        elif self.drag_start:
-            self.drag_pos = event.pos
-
-    def mouse_up(self, event):
-        if event.button == 2:
-            self.panning = False
-            return
-        if event.button != 1 or not self.drag_start:
-            return
-        sx, sy = self.drag_start
-        ex, ey = event.pos
-        self.drag_start = None
-        self.drag_pos = None
-        if abs(ex - sx) > 8 or abs(ey - sy) > 8:
-            rect = pygame.Rect(min(sx, ex), min(sy, ey), abs(ex - sx), abs(ey - sy))
-            selected = []
-            for entity in self.entities:
-                if entity.team == TEAM_RED and entity.kind == "unit":
-                    px, py = self.world_to_screen(entity.x, entity.y)
-                    if rect.collidepoint(px, py):
-                        selected.append(entity.id)
-            self.select_ids(selected, add=pygame.key.get_mods() & pygame.KMOD_SHIFT)
-        else:
-            wx, wy = self.screen_to_world(ex, ey)
-            hit = self.hit_entity(wx, wy, TEAM_RED)
-            if hit:
-                self.select_ids([hit.id], add=pygame.key.get_mods() & pygame.KMOD_SHIFT)
-            elif not pygame.key.get_mods() & pygame.KMOD_SHIFT:
-                if any(e.kind == "unit" for e in self.selected()):
-                    self.command_selected(ex, ey)
-                else:
-                    self.select_ids([])
-
-    def sidebar_click(self, mx, my):
-        mini_rect = pygame.Rect(VIEW_W + 22, TOP_H + 80, MINIMAP_W, MINIMAP_H)
-        if mini_rect.collidepoint(mx, my):
-            rel_x = (mx - mini_rect.x) / mini_rect.w
-            rel_y = (my - mini_rect.y) / mini_rect.h
-            self.camera.x = rel_x * WORLD_W
-            self.camera.y = rel_y * WORLD_H
-            self.clamp_camera()
-            return
-        for button in self.buttons:
-            if button.rect.collidepoint(mx, my):
-                if button.kind == "tab":
-                    self.active_tab = button.action
-                elif button.kind == "build":
-                    self.try_build(button.action)
-                elif button.kind == "train":
-                    self.train_unit(button.action)
-                elif button.kind == "tool" and button.action == "repair":
-                    self.activate_repair_tool()
-                elif button.kind == "tool" and button.action == "sell":
-                    self.activate_sell_tool()
-                return
-
-    def activate_repair_tool(self):
-        if not self.difficulty or self.game_over:
-            return
-        self.placing = None
-        self.sell_mode = False
-        self.repair_mode = True
-        self.alert("Repair tool ready: click a damaged building")
-        self.play("new_options")
-
-    def activate_sell_tool(self):
-        if not self.difficulty or self.game_over:
-            return
-        self.placing = None
-        self.repair_mode = False
-        self.repair_target_id = None
-        self.sell_mode = True
-        self.alert("Sell tool ready: click one of your buildings")
-        self.play("new_options")
-
-    def start_repair_at(self, wx, wy):
-        target = self.hit_entity(wx, wy, TEAM_RED)
-        if not target or target.kind != "structure":
-            self.alert("Repair works on your buildings only")
-            self.play("cancel")
-            return
-        if target.hp >= target.max_hp:
-            return
-        if self.credits < REPAIR_COST:
-            self.alert("Insufficient credits for repair")
-            self.play("insufficient")
-            return
-        self.repair_target_id = target.id
-        self.repair_timer = 0
-        self.alert(f"Repairing {STRUCT_DEFS[target.type]['name']} (${REPAIR_COST}/tick)")
-        self.play("build_start")
-
-    def sell_building_at(self, wx, wy):
-        target = self.hit_entity(wx, wy, TEAM_RED)
-        if not target or target.kind != "structure":
-            self.alert("Sell works on your buildings only")
-            self.play("cancel")
-            return
-        self.sell_building(target)
-
-    def sell_building(self, building):
-        refund = int(STRUCT_DEFS[building.type]["cost"] * 0.5)
-        self.credits = min(99999, self.credits + refund)
-        if self.repair_target_id == building.id:
-            self.repair_target_id = None
-        building.hp = 0
-        self.refresh_navigation()
-        self.alert(f"Sold {STRUCT_DEFS[building.type]['name']} for ${refund}")
-        self.play("construction_done")
-
-    def command_selected(self, mx, my):
-        wx, wy = self.screen_to_world(mx, my)
-        target = self.hit_entity(wx, wy, TEAM_BLUE)
-        units = [e for e in self.selected() if e.kind == "unit"]
-        if not units:
-            return
-        for i, unit in enumerate(units):
-            row = i // 4
-            col = i % 4
-            spread = 28 if len(units) > 1 else 0
-            self.set_unit_destination(unit, wx + (col - 1.5) * spread, wy + row * spread)
-            unit.target_id = target.id if target else None
-            unit.attack_move = bool(target)
-            unit.state = "attack" if target else "move"
-        self.alert("Attack order confirmed" if target else "Moving out")
-        if self.command_voice_timer <= 0:
-            self.play("affirmative" if target else "move")
-            self.command_voice_timer = 1.2
-
-    def hit_entity(self, wx, wy, team=None):
-        for entity in reversed(self.entities):
-            if team and entity.team != team:
-                continue
-            if entity.kind == "structure":
-                if entity.rect().collidepoint(wx, wy):
-                    return entity
-            elif distance_xy(wx, wy, entity.x, entity.y) <= self.unit_hit_radius(entity):
-                return entity
-        return None
-
-    def unit_hit_radius(self, entity):
-        radius = entity.size * 1.8
-        if entity.type == "v3":
-            radius = max(radius, 44)
-        elif entity.type == "apocalypse":
-            radius = max(radius, 48)
-        return radius
-
-    def select_ids(self, ids, add=False):
-        if add:
-            existing = set(self.selected_ids)
-            for entity_id in ids:
-                if entity_id in existing:
-                    existing.remove(entity_id)
-                else:
-                    existing.add(entity_id)
-            self.selected_ids = list(existing)
-        else:
-            self.selected_ids = ids
-        for entity in self.entities:
-            entity.selected = entity.id in self.selected_ids
-        if ids and not add:
-            selected = self.selected()
-            if any(e.type == "dog" for e in selected):
-                self.play("dog")
-            elif self.command_voice_timer <= 0:
-                self.play(random.choice(["yes_commander", "yes_sir", "absolutely"]))
-                self.command_voice_timer = 1.0
+            u_type = random.choice(["gi", "grizzly", "prism"])
+            data = UNIT_DEFS[u_type]
+            ex = random.randint(0, WORLD_W)
+            ey = random.randint(0, 200) # Top area
+            if self.nav_grid.is_walkable_world(ex, ey):
+                e = Entity(
+                    id=self.uid(),
+                    kind="unit",
+                    type=u_type,
+                    team=TEAM_BLUE,
+                    x=ex, y=ey,
+                    w=data["size"], h=data["size"],
+                    hp=data["hp"] * diff["enemy_hp"],
+                    max_hp=data["hp"] * diff["enemy_hp"],
+                    atk=data["atk"] * diff["enemy_atk"],
+                    atk_spd=data["atk_spd"],
+                    range=data["range"], sight=data["sight"],
+                    spd=data["spd"], size=data["size"],
+                    color=data["color"]
+                )
+                self.entities.append(e)
 
     def draw(self):
-        if not self.difficulty:
-            pygame.mouse.set_visible(True)
-            self.draw_menu()
-            return
-        self.screen.fill((8, 8, 8))
-        self.draw_world()
+        self.screen.fill((20, 20, 20))
+        
+        # 1. World View
+        view_rect = pygame.Rect(0, TOP_H, VIEW_W, VIEW_H)
+        pygame.draw.rect(self.screen, (0, 0, 0), view_rect)
+        
+        # Render Map
+        if self.map_surface:
+            # Simple camera transform
+            scaled_map = pygame.transform.scale(self.map_surface, (int(WORLD_W * self.camera.zoom), int(WORLD_H * self.camera.zoom)))
+            off_x = VIEW_W / 2 - self.camera.x * self.camera.zoom
+            off_y = TOP_H + VIEW_H / 2 - self.camera.y * self.camera.zoom
+            self.screen.blit(scaled_map, (off_x, off_y))
+        
+        # Render Entities
+        for e in self.entities:
+            if e.hp <= 0: continue
+            # Project to screen
+            sx = (e.x + e.w/2 - self.camera.x) * self.camera.zoom + VIEW_W / 2
+            sy = (e.y + e.h/2 - self.camera.y) * self.camera.zoom + TOP_H + VIEW_H / 2
+            
+            sw, sh = e.w * self.camera.zoom, e.h * self.camera.zoom
+            rect = pygame.Rect(sx - sw/2, sy - sh/2, sw, sh)
+            draw_rect = rect
+            if e.kind == "unit":
+                min_size = TILE * (1.5 if e.type in ("conscript", "gi", "dog", "tesla_trooper") else 2)
+                sprite_size = max(e.w, min_size) * self.camera.zoom
+                draw_rect = pygame.Rect(0, 0, round(sprite_size), round(sprite_size))
+                draw_rect.center = (round(sx), round(sy))
+            
+            # Only draw if on screen
+            if view_rect.colliderect(draw_rect):
+                team_name = "red" if e.team == TEAM_RED else "blue"
+                sprite_type = ENTITY_SPRITE_TYPES.get(e.type, e.type)
+                if e.type in ("rhino", "grizzly"):
+                    sprite = self.assets.get(
+                        f"{team_name}_rhino_{int(e.facing) % 8}"
+                    )
+                    if sprite is None:
+                        sprite = self.assets.get(f"{team_name}_rhino")
+                else:
+                    sprite = self.assets.get(f"{team_name}_{sprite_type}")
+                if sprite:
+                    self.blit_fit(sprite, draw_rect, 1.0)
+                else:
+                    pygame.draw.rect(self.screen, e.color, draw_rect)
+                if e.selected:
+                    pygame.draw.rect(self.screen, (255, 255, 255), draw_rect, 2)
+                
+                # HP bar
+                hp_w = draw_rect.width * (e.hp / e.max_hp)
+                pygame.draw.rect(self.screen, (200, 0, 0), (draw_rect.left, draw_rect.top - 6, draw_rect.width, 4))
+                pygame.draw.rect(self.screen, (0, 200, 0), (draw_rect.left, draw_rect.top - 6, hp_w, 4))
+
+        # Particles and Zaps
+        for p in self.particles:
+            sx = (p.x - self.camera.x) * self.camera.zoom + VIEW_W / 2
+            sy = (p.y - self.camera.y) * self.camera.zoom + TOP_H + VIEW_H / 2
+            pygame.draw.circle(self.screen, p.color, (round(sx), round(sy)), round(p.size * self.camera.zoom))
+        for z in self.tesla_zaps:
+            pts = []
+            for px, py in z.points:
+                sx = (px - self.camera.x) * self.camera.zoom + VIEW_W / 2
+                sy = (py - self.camera.y) * self.camera.zoom + TOP_H + VIEW_H / 2
+                pts.append((sx, sy))
+            if len(pts) >= 2:
+                pygame.draw.lines(self.screen, z.color, False, pts, round(z.width * self.camera.zoom))
+
+        # 2. UI
         self.draw_topbar()
         self.draw_sidebar()
         self.draw_bottombar()
-        if self.paused:
-            self.draw_pause_overlay()
+        
         if self.game_over:
-            text = "VICTORY" if self.winner == TEAM_RED else "DEFEAT"
-            self.draw_center_banner(text, "Press R for menu")
-        self.draw_nav_vis_overlay()
-        self.draw_repair_cursor()
-
-    def draw_menu(self):
-        # Ultra dark background for contrast
-        self.screen.fill((8, 3, 1))
+            self.draw_center_banner("GAME OVER", f"Winner: {self.winner.upper()}")
+        elif self.difficulty is None:
+            self.draw_difficulty_menu()
+        elif self.paused:
+            self.draw_pause_panel()
         
-        # Draw animated fire field at bottom (inspired by fire.html)
-        self.draw_fire_background()
-        
-        # Add atmospheric glow and particles
-        self.draw_atmospheric_effects()
-        
-        # Draw title with intense glow
-        self.draw_menu_title()
-        
-        # Draw difficulty buttons with fire effect
-        self.draw_difficulty_buttons()
-        
-        # Hint text
-        hint = self.small.render("Click a difficulty or press 1(Easy) / 2(Medium) / 3(Hard)", True, (200, 140, 90))
-        self.screen.blit(hint, hint.get_rect(center=(SCREEN_W // 2, SCREEN_H - 40)))
-
-    def draw_fire_background(self):
-        """Draw animated fire particles at bottom of screen"""
-        if not hasattr(self, 'menu_fire_particles'):
-            self.menu_fire_particles = []
-            self.menu_embers = []
-            self.menu_smoke = []
-            for _ in range(150):
-                self.menu_fire_particles.append({
-                    'x': random.random() * SCREEN_W,
-                    'y': SCREEN_H + random.random() * 100,
-                    'vx': (random.random() - 0.5) * 2,
-                    'vy': -(2 + random.random() * 3),
-                    'life': 1.0,
-                    'max_life': 1.0 + random.random() * 0.5,
-                    'size': random.randint(20, 60),
-                    'hue': random.randint(0, 60),
-                })
-            for _ in range(60):
-                self.menu_embers.append({
-                    'x': random.random() * SCREEN_W,
-                    'y': SCREEN_H,
-                    'vx': (random.random() - 0.5) * 3,
-                    'vy': -(3 + random.random() * 5),
-                    'life': 1.0,
-                    'size': random.randint(2, 5),
-                })
-            for _ in range(40):
-                self.menu_smoke.append({
-                    'x': random.random() * SCREEN_W,
-                    'y': SCREEN_H - 200,
-                    'vx': (random.random() - 0.5) * 0.5,
-                    'vy': -0.5,
-                    'life': 1.0,
-                    'size': random.randint(40, 100),
-                    'opacity': 0.1,
-                })
-        
-        # Update and draw smoke particles (background layer)
-        for p in self.menu_smoke:
-            p['y'] += p['vy']
-            p['life'] -= 0.008
-            if p['life'] > 0:
-                color = (60, 40, 20)
-                pygame.draw.circle(self.screen, color, (int(p['x']), int(p['y'])), max(2, int(p['size'] * (1 - p['life']) * 0.5)))
-        
-        # Update and draw fire particles
-        alive = []
-        for p in self.menu_fire_particles:
-            p['y'] += p['vy']
-            p['vx'] += (random.random() - 0.5) * 0.3
-            p['life'] -= 0.015
-            p['size'] *= 0.98
-            
-            if p['life'] > 0:
-                alive.append(p)
-                # Gradient color based on life (bright yellow -> orange -> red -> dark)
-                if p['life'] > 0.7:
-                    color = (255, 200 + int(55 * p['life']), 0)
-                elif p['life'] > 0.4:
-                    color = (255, int(180 * (p['life'] - 0.4) / 0.3), 0)
-                elif p['life'] > 0.2:
-                    color = (220, int(80 * (p['life'] - 0.2) / 0.2), 0)
-                else:
-                    color = (180, 30, 0)
-                
-                try:
-                    pygame.draw.circle(self.screen, color, (int(p['x']), int(p['y'])), max(1, int(p['size'] * p['life'])))
-                except:
-                    pass
-            else:
-                # Respawn at bottom
-                p['y'] = SCREEN_H + random.random() * 50
-                p['x'] = random.random() * SCREEN_W
-                p['life'] = 1.0
-                p['size'] = random.randint(20, 60)
-                alive.append(p)
-        
-        self.menu_fire_particles = alive
-        
-        # Update and draw embers (bright fast particles)
-        alive_embers = []
-        for e in self.menu_embers:
-            e['y'] += e['vy']
-            e['vx'] *= 0.99
-            e['vy'] *= 0.98
-            e['life'] -= 0.02
-            
-            if e['life'] > 0:
-                alive_embers.append(e)
-                ember_color = (255, 255, int(100 * e['life']))
-                pygame.draw.circle(self.screen, ember_color, (int(e['x']), int(e['y'])), max(1, int(e['size'] * e['life'])))
-            else:
-                e['y'] = SCREEN_H
-                e['x'] = random.random() * SCREEN_W
-                e['life'] = 1.0
-                alive_embers.append(e)
-        
-        self.menu_embers = alive_embers
-
-    def draw_atmospheric_effects(self):
-        """Draw glowing particles and light effects"""
-        if not hasattr(self, 'menu_glow_time'):
-            self.menu_glow_time = 0
-            self.menu_sparks = []
-        
-        self.menu_glow_time += 0.016
-        
-        # Flickering base glow at bottom (stronger effect)
-        flicker = 0.6 + 0.4 * math.sin(self.menu_glow_time * 3) + random.random() * 0.2
-        glow_height = 500
-        for i in range(glow_height):
-            alpha = int((1 - i / glow_height) ** 1.5 * 120 * flicker)
-            intensity = int(60 * (1 - i / glow_height))
-            color = (min(220 + intensity, 255), min(80 + intensity, 255), 10)
-            try:
-                glow_line = pygame.Surface((SCREEN_W, 1), pygame.SRCALPHA)
-                glow_line.fill((color[0], color[1], color[2], alpha // 4))
-                self.screen.blit(glow_line, (0, SCREEN_H - i))
-            except:
-                pass
-        
-        # Random bright sparks
-        for _ in range(20):
-            x = random.randint(0, SCREEN_W)
-            y = random.randint(SCREEN_H - 350, SCREEN_H - 100)
-            colors = [(255, 255, 200), (255, 200, 0), (255, 100, 0), (255, 150, 50)]
-            color = random.choice(colors)
-            size = random.randint(1, 4)
-            pygame.draw.circle(self.screen, color, (x, y), size)
-
-    def draw_menu_title(self):
-        """Draw the main title with intense neon glow"""
-        title_text = "RED ALERT MINI"
-        subtitle_text = "- BLOOD, STEEL & FIRE -"
-        title_y = 120
-        
-        # Draw subtle glow layers (less intense)
-        for offset in range(6, 1, -1):
-            color_intensity = 1 - offset / 6
-            glow_color = (int(200 * color_intensity), int(80 * color_intensity), 0)
-            glow_title = self.big.render(title_text, True, glow_color)
-            glow_rect = glow_title.get_rect(center=(SCREEN_W // 2 + offset // 2, title_y + offset // 2))
-            self.screen.blit(glow_title, glow_rect)
-        
-        # Main title (only once)
-        title = self.big.render(title_text, True, (255, 160, 50))
-        self.screen.blit(title, title.get_rect(center=(SCREEN_W // 2, title_y)))
-        
-        # Subtitle
-        sub = self.font.render(subtitle_text, True, (255, 140, 80))
-        self.screen.blit(sub, sub.get_rect(center=(SCREEN_W // 2, 210)))
-
-    def draw_difficulty_buttons(self):
-        """Draw enhanced difficulty selection buttons"""
-        for key, rect in self.menu_cards():
-            hovered = key == self.menu_hover_key
-            # Glow effect behind button
-            glow_rect = rect.inflate(20, 20)
-            glow_surf = pygame.Surface(glow_rect.size, pygame.SRCALPHA)
-            glow_alpha = 80 if hovered else 40
-            pygame.draw.rect(glow_surf, (255, 100, 0, glow_alpha), (0, 0, glow_rect.w, glow_rect.h), border_radius=10)
-            self.screen.blit(glow_surf, glow_rect)
-            
-            # Button frame with fire colors
-            border_color = (255, 200, 100) if hovered else (255, 120, 40)
-            pygame.draw.rect(self.screen, border_color, rect, 4, border_radius=8)
-            pygame.draw.rect(self.screen, (255, 80, 20), pygame.Rect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4), 2, border_radius=7)
-            
-            # Button background with transparency
-            btn_bg = pygame.Surface((rect.w - 4, rect.h - 4), pygame.SRCALPHA)
-            bg_alpha = 240 if hovered else 200
-            bg_color = (60, 25, 10, bg_alpha) if hovered else (40, 15, 5, bg_alpha)
-            btn_bg.fill(bg_color)
-            self.screen.blit(btn_bg, (rect.x + 2, rect.y + 2))
-            
-            label = DIFFICULTIES[key]["label"]
-            num_label = {"easy": "1", "medium": "2", "hard": "3"}[key]
-            
-            # Draw number indicator
-            num_font = pygame.font.Font(None, 48)
-            num_text = num_font.render(num_label, True, (255, 180, 80))
-            self.screen.blit(num_text, (rect.x + 20, rect.y + 25))
-            
-            # Difficulty icon
-            icon_x = rect.centerx
-            icon_y = rect.y + 40
-            icon_color = (255, 200, 100)
-            
-            if key == "easy":
-                pygame.draw.line(self.screen, icon_color, (icon_x - 12, icon_y), (icon_x + 12, icon_y), 4)
-                pygame.draw.line(self.screen, icon_color, (icon_x, icon_y - 12), (icon_x, icon_y + 12), 4)
-            elif key == "medium":
-                for offset in [-6, 0, 6]:
-                    pygame.draw.line(self.screen, icon_color, (icon_x - 15, icon_y + offset), (icon_x + 15, icon_y + offset), 3)
-            else:
-                star_size = 12
-                points = []
-                for i in range(10):
-                    angle = i * math.pi / 5 - math.pi / 2
-                    radius = star_size if i % 2 == 0 else star_size * 0.4
-                    points.append((icon_x + radius * math.cos(angle), icon_y + radius * math.sin(angle)))
-                pygame.draw.polygon(self.screen, icon_color, points)
-                pygame.draw.polygon(self.screen, (255, 220, 120), points, 2)
-            
-            # Label text
-            txt = self.font.render(label.upper(), True, (255, 240, 180))
-            self.screen.blit(txt, (rect.centerx - 30, rect.y + 60))
-            
-            # Description
-            descriptions = {
-                "easy": "Softer Opposition",
-                "medium": "Balanced Conflict",
-                "hard": "Extreme Pressure"
-            }
-            desc = self.small.render(descriptions[key], True, (210, 160, 100))
-            self.screen.blit(desc, (rect.centerx - 40, rect.y + 80))
-
-    def menu_cards(self):
-        w = 240
-        h = 108
-        y = 320
-        gap = 28
-        start_x = SCREEN_W // 2 - (w * 3 + gap * 2) // 2
-        return [
-            ("easy", pygame.Rect(start_x, y, w, h)),
-            ("medium", pygame.Rect(start_x + w + gap, y, w, h)),
-            ("hard", pygame.Rect(start_x + (w + gap) * 2, y, w, h)),
-        ]
-
-    def draw_nav_vis_overlay(self):
-        if not self.show_nav_vis or self.nav_vis_surface is None:
-            return
-        scale = 3
-        w = self.nav_vis_surface.get_width() * scale
-        h = self.nav_vis_surface.get_height() * scale
-        scaled = pygame.transform.scale(self.nav_vis_surface, (w, h))
-        overlay = scaled.convert()
-        overlay.set_alpha(180)
-        self.screen.blit(overlay, (SCREEN_W - w - 10, TOP_H + 10))
-
-    def draw_world(self):
-        viewport = pygame.Rect(0, TOP_H, VIEW_W, VIEW_H)
-        pygame.draw.rect(self.screen, (20, 22, 18), viewport)
-        half_w = VIEW_W / 2 / self.camera.zoom
-        half_h = VIEW_H / 2 / self.camera.zoom
-        vx = int(max(0, self.camera.x - half_w))
-        vy = int(max(0, self.camera.y - half_h))
-        vw = int(min(WORLD_W - vx, half_w * 2))
-        vh = int(min(WORLD_H - vy, half_h * 2))
-        view = pygame.Rect(vx, vy, vw, vh)
-        if vw <= 0 or vh <= 0:
-            return
-        try:
-            world_part = self.map_surface.subsurface(view).copy()
-            scaled = pygame.transform.smoothscale(world_part, (max(1, round(view.w * self.camera.zoom)), max(1, round(view.h * self.camera.zoom))))
-            sx, sy = self.world_to_screen(view.x, view.y)
-            self.screen.blit(scaled, (sx, sy))
-        except Exception:
-            return
-        self.draw_grid()
-        if self.debug_nav:
-            self.draw_nav_debug()
-        for ore in self.ore:
-            if ore.available:
-                self.draw_ore(ore)
-        for entity in sorted(self.entities, key=lambda e: (e.y, e.kind == "unit")):
-            self.draw_entity(entity)
-        for zap in self.tesla_zaps:
-            self.draw_tesla_zap(zap)
-        for particle in self.particles:
-            self.draw_particle(particle)
-        if self.placing:
-            self.draw_placement_preview()
-        if self.drag_start and self.drag_pos:
-            rect = pygame.Rect(
-                min(self.drag_start[0], self.drag_pos[0]),
-                min(self.drag_start[1], self.drag_pos[1]),
-                abs(self.drag_pos[0] - self.drag_start[0]),
-                abs(self.drag_pos[1] - self.drag_start[1]),
-            )
-            pygame.draw.rect(self.screen, (240, 210, 80), rect, 1)
-            fill = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-            fill.fill((240, 210, 80, 32))
-            self.screen.blit(fill, rect)
-
-    def draw_grid(self):
-        if self.camera.zoom < 0.9:
-            return
-        left, top = self.screen_to_world(0, TOP_H)
-        right, bottom = self.screen_to_world(VIEW_W, TOP_H + VIEW_H)
-        start_x = int(left // TILE) * TILE
-        start_y = int(top // TILE) * TILE
-        color = (0, 0, 0, 38)
-        grid = pygame.Surface((VIEW_W, VIEW_H), pygame.SRCALPHA)
-        for x in range(start_x, int(right) + TILE, TILE):
-            sx, _ = self.world_to_screen(x, 0)
-            pygame.draw.line(grid, color, (sx, 0), (sx, VIEW_H))
-        for y in range(start_y, int(bottom) + TILE, TILE):
-            _, sy = self.world_to_screen(0, y)
-            pygame.draw.line(grid, color, (0, sy - TOP_H), (VIEW_W, sy - TOP_H))
-        self.screen.blit(grid, (0, TOP_H))
-
-    def draw_nav_debug(self):
-        left, top = self.screen_to_world(0, TOP_H)
-        right, bottom = self.screen_to_world(VIEW_W, TOP_H + VIEW_H)
-        start_gx = max(0, int(left // NAV_TILE))
-        end_gx = min(self.nav_grid.cols - 1, int(right // NAV_TILE) + 1)
-        start_gy = max(0, int(top // NAV_TILE))
-        end_gy = min(self.nav_grid.rows - 1, int(bottom // NAV_TILE) + 1)
-        overlay = pygame.Surface((VIEW_W, VIEW_H), pygame.SRCALPHA)
-        for gy in range(start_gy, end_gy + 1):
-            for gx in range(start_gx, end_gx + 1):
-                wx = gx * NAV_TILE
-                wy = gy * NAV_TILE
-                sx, sy = self.world_to_screen(wx, wy)
-                rect = pygame.Rect(
-                    round(sx),
-                    round(sy - TOP_H),
-                    max(1, round(NAV_TILE * self.camera.zoom)),
-                    max(1, round(NAV_TILE * self.camera.zoom)),
-                )
-                if self.nav_grid.static_blocked[gy][gx]:
-                    color = (220, 35, 35, 105)
-                elif self.nav_grid.building_occupied[gy][gx]:
-                    color = (255, 160, 40, 115)
-                else:
-                    color = (40, 210, 90, 38)
-                pygame.draw.rect(overlay, color, rect)
-                if self.camera.zoom >= 0.9:
-                    pygame.draw.rect(overlay, (0, 0, 0, 40), rect, 1)
-        self.screen.blit(overlay, (0, TOP_H))
-
-        for unit in self.selected():
-            if unit.kind != "unit" or not unit.path:
-                continue
-            points = [self.world_to_screen(unit.x, unit.y)] + [self.world_to_screen(x, y) for x, y in unit.path]
-            if len(points) > 1:
-                pygame.draw.lines(self.screen, (90, 210, 255), False, [(round(x), round(y)) for x, y in points], 2)
-
-    def draw_ore(self, ore):
-        sx, sy = self.world_to_screen(ore.x, ore.y)
-        if not self.on_view(sx, sy, 44):
-            return
-        zoom = self.camera.zoom
-        tick = pygame.time.get_ticks() / 1000
-        pulse = 0.5 + 0.5 * math.sin(tick * 4.4 + ore.x * 0.03 + ore.y * 0.02)
-        shimmer = 0.5 + 0.5 * math.sin(tick * 7.0 + ore.x * 0.01)
-        cx, cy = round(sx), round(sy)
-
-        glow_r = max(10, round((16 + 5 * pulse) * zoom))
-        glow = pygame.Surface((glow_r * 2 + 4, glow_r * 2 + 4), pygame.SRCALPHA)
-        gc = glow_r + 2
-        for layer in range(4):
-            radius = max(1, glow_r - layer * max(2, round(3 * zoom)))
-            alpha = max(0, round((42 + 28 * pulse) * (1 - layer / 4)))
-            pygame.draw.circle(glow, (255, 216, 70, alpha), (gc, gc), radius)
-        self.screen.blit(glow, (cx - gc, cy - gc))
-
-        shadow_w = max(6, round(14 * zoom))
-        shadow_h = max(3, round(5 * zoom))
-        pygame.draw.ellipse(
-            self.screen,
-            (45, 28, 8),
-            pygame.Rect(cx - shadow_w // 2, cy + round(7 * zoom), shadow_w, shadow_h),
-        )
-
-        def draw_diamond(dx, dy, size, fill, edge):
-            px = cx + round(dx * zoom)
-            py = cy + round(dy * zoom)
-            r = max(3, round(size * zoom * (0.88 + pulse * 0.1)))
-            points = [(px, py - r), (px + r, py), (px, py + r), (px - r, py)]
-            pygame.draw.polygon(self.screen, edge, points)
-            inner = max(2, r - max(1, round(2 * zoom)))
-            inner_points = [(px, py - inner), (px + inner, py), (px, py + inner), (px - inner, py)]
-            pygame.draw.polygon(self.screen, fill, inner_points)
-            glint = max(1, round(r * 0.35))
-            pygame.draw.line(self.screen, (255, 255, 210), (px - glint, py - glint), (px, py - r + 1), max(1, round(zoom)))
-
-        draw_diamond(0, 0, 7, (255, 220, 72), (122, 77, 18))
-        draw_diamond(-7, 5, 4.2, (245, 183, 45), (104, 64, 14))
-        draw_diamond(7, 4, 3.8, (255, 239, 126), (119, 75, 17))
-
-        if shimmer > 0.72:
-            sparkle_r = max(2, round(4 * zoom * shimmer))
-            sparkle_x = cx + round(10 * zoom)
-            sparkle_y = cy - round(10 * zoom)
-            pygame.draw.line(self.screen, (255, 250, 180), (sparkle_x - sparkle_r, sparkle_y), (sparkle_x + sparkle_r, sparkle_y), 1)
-            pygame.draw.line(self.screen, (255, 250, 180), (sparkle_x, sparkle_y - sparkle_r), (sparkle_x, sparkle_y + sparkle_r), 1)
-
-    def draw_entity(self, entity):
-        if entity.kind == "structure":
-            self.draw_structure(entity)
-        else:
-            self.draw_unit(entity)
-
-    def draw_structure(self, entity):
-        sx, sy = self.world_to_screen(entity.x, entity.y)
-        w = max(2, entity.w * self.camera.zoom)
-        h = max(2, entity.h * self.camera.zoom)
-        if not self.on_view(sx + w / 2, sy + h / 2, max(w, h)):
-            return
-        rect = pygame.Rect(round(sx), round(sy), round(w), round(h))
-        asset = self.structure_asset(entity)
-        if asset:
-            self.blit_fit(asset, rect, 1.08)
-        else:
-            pygame.draw.rect(self.screen, entity.color, rect)
-            pygame.draw.rect(self.screen, (45, 25, 18), rect, 2)
-        self.draw_production_marker(entity, rect)
-        if entity.selected:
-            pygame.draw.rect(self.screen, (255, 225, 40), rect, 2)
-            if entity.atk > 0:
-                cx, cy = self.world_to_screen(*entity.center())
-                pygame.draw.circle(self.screen, (255, 55, 35), (round(cx), round(cy)), round(entity.range * self.camera.zoom), 1)
-            if entity.type == "radar":
-                cx, cy = self.world_to_screen(*entity.center())
-                pygame.draw.circle(self.screen, (240, 200, 60), (round(cx), round(cy)), round(300 * self.camera.zoom), 1)
-        if self.repair_target_id == entity.id:
-            pygame.draw.rect(self.screen, (90, 235, 255), rect.inflate(4, 4), 2, border_radius=3)
-        self.draw_health(entity, rect)
-
-    def draw_production_marker(self, entity, rect):
-        if entity.team != TEAM_RED or not self.training_queue:
-            return
-        unit_type = self.training_queue[0]
-        if entity.type != self.producer_type_for_unit(unit_type):
-            return
-
-        pct = clamp(self.training_timer / max(3, UNIT_DEFS[unit_type]["cost"] / 200), 0, 1)
-        pulse = 0.55 + 0.45 * math.sin(pygame.time.get_ticks() / 120)
-        color = (255, 178, 55) if entity.type == "warfactory" else (95, 215, 255)
-        label = "VEH" if entity.type == "warfactory" else "INF"
-
-        bay_w = max(16, round(rect.w * (0.42 if entity.type == "warfactory" else 0.32)))
-        bay_h = max(6, round(rect.h * 0.12))
-        bay = pygame.Rect(0, 0, bay_w, bay_h)
-        bay.centerx = rect.centerx
-        bay.bottom = rect.bottom + max(2, round(4 * self.camera.zoom))
-
-        glow = pygame.Surface((bay.w + 18, bay.h + 18), pygame.SRCALPHA)
-        pygame.draw.ellipse(glow, (*color, round(85 * pulse)), glow.get_rect())
-        self.screen.blit(glow, (bay.centerx - glow.get_width() // 2, bay.centery - glow.get_height() // 2))
-        pygame.draw.rect(self.screen, (18, 10, 8), bay, border_radius=2)
-        pygame.draw.rect(self.screen, color, bay, max(1, round(2 * self.camera.zoom)), border_radius=2)
-
-        fill = bay.copy()
-        fill.w = max(1, round(bay.w * pct))
-        pygame.draw.rect(self.screen, (*color, 180), fill, border_radius=2)
-
-        if self.camera.zoom >= 0.75:
-            text = self.small.render(label, True, (255, 245, 190))
-            self.screen.blit(text, text.get_rect(center=(bay.centerx, bay.y - 7)))
-
-    def draw_unit(self, entity):
-        sx, sy = self.world_to_screen(entity.x, entity.y)
-        r = max(4, entity.size * self.camera.zoom)
-        if not self.on_view(sx, sy, r + 20):
-            return
-        pygame.draw.ellipse(self.screen, (0, 0, 0, 110), (sx - r, sy + r * 0.35, r * 2.2, r * 0.8))
-        asset = self.unit_asset(entity)
-        if asset:
-            if entity.type == "apocalypse" and entity.team == TEAM_RED:
-                asset = pygame.transform.rotozoom(asset, -math.degrees(entity.facing), 1.0)
-            draw_scale = 3.7 if entity.type == "apocalypse" else 3.0
-            rect = pygame.Rect(0, 0, round(r * draw_scale), round(r * draw_scale))
-            rect.center = (round(sx), round(sy))
-            self.blit_fit(asset, rect, 1)
-        else:
-            pygame.draw.circle(self.screen, entity.color, (round(sx), round(sy)), round(r))
-            cannon_x = sx + math.cos(entity.facing) * r * 1.25
-            cannon_y = sy + math.sin(entity.facing) * r * 1.25
-            pygame.draw.line(self.screen, (35, 24, 18), (sx, sy), (cannon_x, cannon_y), max(2, round(r * 0.25)))
-        if entity.selected:
-            pygame.draw.circle(self.screen, (255, 230, 40), (round(sx), round(sy)), round(r + 5), 2)
-        bar = pygame.Rect(round(sx - r), round(sy - r - 10), round(r * 2), 4)
-        self.draw_health(entity, bar, force=entity.selected or entity.hp < entity.max_hp)
-
-    def structure_asset(self, entity):
-        prefix = "red" if entity.team == TEAM_RED else "blue"
-        key = f"{prefix}_{entity.type}"
-        if entity.type == "conyard":
-            key = f"{prefix}_conyard"
-        return self.assets.get(key)
-
-    def unit_asset(self, entity):
-        if entity.type in ("rhino", "grizzly"):
-            prefix = "red" if entity.team == TEAM_RED else "blue"
-            return self.assets.get(f"{prefix}_rhino_{self.facing_frame(entity)}") or self.assets.get(f"{prefix}_rhino_0") or self.assets.get("red_rhino")
-        if entity.team == TEAM_BLUE:
-            if entity.type == "gi":
-                return self.assets.get("blue_troop")
-            if entity.type in ("apocalypse", "prism"):
-                return self.assets.get("blue_apocalypse")
-            if entity.type == "v3":
-                return self.assets.get("blue_rhino_0")
-            return self.assets.get("blue_troop")
-        return {
-            "conscript": self.assets.get("red_troop"),
-            "dog": self.assets.get("red_dog"),
-            "tesla_trooper": self.assets.get("red_tesla_trooper") or self.assets.get("red_troop"),
-            "v3": self.assets.get("red_v3"),
-            "apocalypse": self.assets.get("red_apocalypse"),
-        }.get(entity.type)
-
-    def facing_frame(self, entity):
-        # Asset frames are north-first and then clockwise: 0 up, 2 right, 4 down, 6 left.
-        angle = (entity.facing + math.pi / 2 + math.tau) % math.tau
-        return int(((angle + math.tau / 16) % math.tau) / (math.tau / 8))
-
-    def blit_fit(self, image, rect, scale=1.0):
-        iw, ih = image.get_size()
-        if iw == 0 or ih == 0:
-            return
-        ratio = ih / iw
-        fit_w = rect.w * scale
-        fit_h = fit_w * ratio
-        if fit_h > rect.h * scale:
-            fit_h = rect.h * scale
-            fit_w = fit_h / ratio
-        scaled = pygame.transform.smoothscale(image, (max(1, round(fit_w)), max(1, round(fit_h))))
-        out = scaled.get_rect(center=rect.center)
-        self.screen.blit(scaled, out)
-
-    def draw_health(self, entity, rect, force=True):
-        if not force:
-            return
-        pct = clamp(entity.hp / entity.max_hp, 0, 1)
-        back = pygame.Rect(rect.x, rect.y - 8, rect.w, 5)
-        pygame.draw.rect(self.screen, (12, 12, 12), back)
-        color = (45, 210, 75) if pct > 0.55 else (220, 170, 20) if pct > 0.25 else (220, 45, 30)
-        pygame.draw.rect(self.screen, color, (back.x, back.y, round(back.w * pct), back.h))
-
-    def draw_particle(self, particle):
-        sx, sy = self.world_to_screen(particle.x, particle.y)
-        if particle.text:
-            surf = self.small.render(particle.text, True, particle.color)
-            self.screen.blit(surf, surf.get_rect(center=(sx, sy)))
-        else:
-            pygame.draw.circle(self.screen, particle.color, (round(sx), round(sy)), max(1, round(particle.size)))
-
-    def draw_tesla_zap(self, zap):
-        if len(zap.points) < 2:
-            return
-        alpha = clamp(zap.ttl / zap.max_ttl, 0, 1)
-        points = [self.world_to_screen(x, y) for x, y in zap.points]
-        points = [(round(x), round(y)) for x, y in points]
-        glow_width = max(2, round((zap.width + 5) * self.camera.zoom))
-        core_width = max(1, round(zap.width * self.camera.zoom))
-        glow_color = (*zap.color, round(70 * alpha))
-        core_color = (240, 255, 255, round(235 * alpha))
-
-        overlay = pygame.Surface((VIEW_W, VIEW_H), pygame.SRCALPHA)
-        local_points = [(x, y - TOP_H) for x, y in points]
-        if len(local_points) >= 2:
-            pygame.draw.lines(overlay, glow_color, False, local_points, glow_width)
-            pygame.draw.lines(overlay, (*zap.color, round(185 * alpha)), False, local_points, max(1, core_width + 1))
-            pygame.draw.lines(overlay, core_color, False, local_points, core_width)
-            for x, y in local_points[1:-1:2]:
-                pygame.draw.circle(overlay, (210, 250, 255, round(120 * alpha)), (x, y), max(2, round(4 * self.camera.zoom)))
-        self.screen.blit(overlay, (0, TOP_H))
-
-    def draw_hammer_icon(self, rect):
-        handle = (130, 78, 38)
-        handle_edge = (62, 34, 18)
-        metal = (210, 220, 220)
-        metal_dark = (105, 118, 124)
-        x1 = rect.x + rect.w * 0.30
-        y1 = rect.y + rect.h * 0.78
-        x2 = rect.x + rect.w * 0.65
-        y2 = rect.y + rect.h * 0.34
-        pygame.draw.line(self.screen, handle_edge, (x1, y1), (x2, y2), max(4, rect.w // 9))
-        pygame.draw.line(self.screen, handle, (x1, y1), (x2, y2), max(2, rect.w // 14))
-        head = pygame.Rect(0, 0, max(18, rect.w // 2), max(9, rect.h // 5))
-        head.center = (round(rect.x + rect.w * 0.67), round(rect.y + rect.h * 0.29))
-        pygame.draw.rect(self.screen, metal_dark, head.inflate(4, 4), border_radius=2)
-        pygame.draw.rect(self.screen, metal, head, border_radius=2)
-        pygame.draw.line(self.screen, (255, 255, 240), (head.left + 3, head.top + 2), (head.right - 3, head.top + 2), 1)
-
-    def draw_sell_icon(self, rect):
-        coin = (244, 185, 52)
-        coin_edge = (116, 72, 18)
-        red = (230, 54, 38)
-        cx, cy = rect.center
-        radius = max(8, min(rect.w, rect.h) // 4)
-        pygame.draw.circle(self.screen, coin_edge, (cx, cy), radius + 3)
-        pygame.draw.circle(self.screen, coin, (cx, cy), radius)
-        dollar = self.font.render("$", True, (72, 45, 16))
-        self.screen.blit(dollar, dollar.get_rect(center=(cx, cy)))
-        pygame.draw.line(self.screen, red, (rect.left + 8, rect.bottom - 8), (rect.right - 8, rect.top + 8), max(3, rect.w // 11))
-
-    def draw_repair_cursor(self):
-        active = (self.repair_mode or self.sell_mode) and self.difficulty and not self.paused and not self.game_over
-        pygame.mouse.set_visible(not active)
-        if not active:
-            return
-        mx, my = pygame.mouse.get_pos()
-        rect = pygame.Rect(mx - 6, my - 2, 34, 34)
-        if self.sell_mode:
-            self.draw_sell_icon(rect)
-        else:
-            self.draw_hammer_icon(rect)
-        if self.repair_mode and self.credits < REPAIR_COST:
-            pygame.draw.line(self.screen, (245, 45, 35), (mx - 4, my + 26), (mx + 24, my - 2), 3)
-
-    def draw_placement_preview(self):
-        mx, my = pygame.mouse.get_pos()
-        if mx >= VIEW_W or my < TOP_H or my > TOP_H + VIEW_H:
-            return
-        wx, wy = self.screen_to_world(mx, my)
-        data = STRUCT_DEFS[self.placing]
-        gx = int(wx // TILE)
-        gy = int(wy // TILE)
-        wt = data.get("w_tiles", data["size"])
-        ht = data.get("h_tiles", data["size"])
-        sx, sy = self.world_to_screen(gx * TILE, gy * TILE)
-        rect = pygame.Rect(round(sx), round(sy), round(wt * TILE * self.camera.zoom), round(ht * TILE * self.camera.zoom))
-        valid = self.valid_placement(gx, gy, wt, ht)
-        color = (40, 220, 80, 90) if valid else (240, 40, 30, 90)
-        fill = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-        fill.fill(color)
-        self.screen.blit(fill, rect)
-        pygame.draw.rect(self.screen, color[:3], rect, 2)
-
-    def valid_placement(self, gx, gy, wt, ht):
-        rect = pygame.Rect(gx * TILE, gy * TILE, wt * TILE, ht * TILE)
-        if rect.left < 0 or rect.top < 0 or rect.right > WORLD_W or rect.bottom > WORLD_H:
-            return False
-        if any(e.kind == "structure" and rect.colliderect(e.rect()) for e in self.entities):
-            return False
-        if not self.nav_grid.rect_walkable_for_building(rect):
-            return False
-        return any(e.kind == "structure" and e.team == TEAM_RED and distance_xy(rect.centerx, rect.centery, *e.center()) < BUILD_RADIUS for e in self.entities)
+        if self.message_timer > 0:
+            msg_surf = self.font.render(self.message, True, (255, 255, 255))
+            self.screen.blit(msg_surf, (VIEW_W // 2 - msg_surf.get_width() // 2, TOP_H + 20))
 
     def draw_topbar(self):
-        pygame.draw.rect(self.screen, (18, 16, 14), (0, 0, SCREEN_W, TOP_H))
-        pygame.draw.line(self.screen, (160, 40, 28), (0, TOP_H - 1), (SCREEN_W, TOP_H - 1), 2)
-        logo = self.font.render("RED ALERT MINI", True, (245, 55, 35))
-        self.screen.blit(logo, (18, 12))
-        diff = DIFFICULTIES[self.difficulty]["label"].upper()
-        stat = self.small.render(f"{diff}   WAVE {self.wave}   POWER {self.power}", True, (240, 205, 140))
-        self.screen.blit(stat, (260, 15))
-        msg_color = (255, 205, 70) if self.message_timer > 0 else (150, 135, 115)
-        msg = self.small.render(self.message, True, msg_color)
-        self.screen.blit(msg, (690, 15))
-        interval = DIFFICULTIES[self.difficulty]["wave_interval"]
-        pct = clamp(self.wave_timer / interval, 0, 1)
-        pygame.draw.rect(self.screen, (50, 30, 20), (SCREEN_W - 190, 16, 150, 12))
-        pygame.draw.rect(self.screen, (210, 40, 28), (SCREEN_W - 190, 16, round(150 * pct), 12))
-        self.draw_pause_button()
+        pygame.draw.rect(self.screen, (30, 30, 30), (0, 0, SCREEN_W, TOP_H))
+        title = self.font.render("Soviets vs Allies", True, (200, 200, 200))
+        self.screen.blit(title, (20, TOP_H // 2 - title.get_height() // 2))
 
-    def draw_pause_button(self):
-        """Draw the pause/resume toggle button in the top-right corner."""
-        pause_rect = pygame.Rect(SCREEN_W - 38, 10, 26, 26)
-        mouse_pos = pygame.mouse.get_pos()
-        hovered = pause_rect.collidepoint(mouse_pos) and not self.paused
-        # Background (brighter when hovered)
-        bg = (70, 32, 22) if hovered else (40, 20, 14)
-        border = (245, 95, 50) if hovered else (160, 40, 28)
-        pygame.draw.rect(self.screen, bg, pause_rect, border_radius=4)
-        pygame.draw.rect(self.screen, border, pause_rect, 2, border_radius=4)
-        # Icon: two bars when running, triangle when paused
-        cx, cy = pause_rect.center
-        if self.paused:
-            # Play triangle
-            tri = [
-                (cx - 5, cy - 7),
-                (cx - 5, cy + 7),
-                (cx + 7, cy),
-            ]
-            pygame.draw.polygon(self.screen, (255, 210, 90), tri)
-        else:
-            # Pause bars
-            bar_w, bar_h, gap = 4, 12, 4
-            pygame.draw.rect(self.screen, (255, 210, 90),
-                             (cx - gap - bar_w, cy - bar_h // 2, bar_w, bar_h), border_radius=1)
-            pygame.draw.rect(self.screen, (255, 210, 90),
-                             (cx + gap, cy - bar_h // 2, bar_w, bar_h), border_radius=1)
-        # Tooltip-style hint
-        if hovered:
-            tip = self.small.render("Pause (P)", True, (240, 200, 140))
-            self.screen.blit(tip, tip.get_rect(midright=(pause_rect.x - 6, pause_rect.centery)))
-
-    def draw_pause_overlay(self):
-        """Black out the world, freeze simulation visuals, and draw the pause menu."""
-        # 1. Solid black wash over the whole screen
-        blackout = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
-        blackout.fill((0, 0, 0, 215))
-        self.screen.blit(blackout, (0, 0))
-
-        # 2. Centered panel
-        panel_w, panel_h = 360, 360
-        panel = pygame.Rect(0, 0, panel_w, panel_h)
-        panel.center = (SCREEN_W // 2, SCREEN_H // 2)
-        # Outer gold + inner purple borders for a Yuri feel
-        pygame.draw.rect(self.screen, (14, 8, 8), panel.inflate(8, 8), border_radius=10)
-        pygame.draw.rect(self.screen, (200, 55, 35), panel.inflate(4, 4), border_radius=8)
-        pygame.draw.rect(self.screen, (22, 8, 28), panel, border_radius=6)
-        pygame.draw.rect(self.screen, (120, 45, 175), panel, 2, border_radius=6)
-
-        # 3. Title
-        title = self.big.render("PAUSED", True, (255, 90, 55))
-        self.screen.blit(title, title.get_rect(center=(panel.centerx, panel.y + 38)))
-        sub = self.font.render("COMMAND HALTED", True, (230, 190, 135))
-        self.screen.blit(sub, sub.get_rect(center=(panel.centerx, panel.y + 76)))
-
-        # 4. Buttons (Resume, Mute, Vol-, Vol+, Quit)
+    def draw_pause_panel(self):
         self.paused_buttons = []
-        btn_w, btn_h = 280, 40
-        gap = 10
-        first_y = panel.y + 110
-        mouse_pos = pygame.mouse.get_pos()
-        for idx, (label, action, sub_label) in enumerate([
-            ("RESUME GAME", "resume", "P"),
-            ("MUTE / UNMUTE", "mute", "M"),
-            ("SFX VOLUME -", "vol_down", "-"),
-            ("SFX VOLUME +", "vol_up", "+"),
-            ("QUIT TO MENU", "quit", "ESC"),
-        ]):
-            bx = panel.centerx - btn_w // 2
-            by = first_y + idx * (btn_h + gap)
-            rect = pygame.Rect(bx, by, btn_w, btn_h)
-            hovered = rect.collidepoint(mouse_pos)
+        panel = pygame.Rect(VIEW_W // 4, TOP_H + 100, VIEW_W // 2, VIEW_H - 200)
+        pygame.draw.rect(self.screen, (40, 20, 60), panel, border_radius=10)
+        pygame.draw.rect(self.screen, (120, 40, 175), panel, 3, border_radius=10)
+        
+        title = self.big.render("PAUSED", True, (255, 255, 255))
+        self.screen.blit(title, title.get_rect(center=(panel.centerx, panel.y + 40)))
+        
+        # Resume button
+        res_rect = pygame.Rect(panel.centerx - 60, panel.centery, 120, 40)
+        pygame.draw.rect(self.screen, (80, 40, 120), res_rect, border_radius=5)
+        res_txt = self.font.render("RESUME", True, (255, 255, 255))
+        self.screen.blit(res_txt, res_txt.get_rect(center=res_rect.center))
+        self.paused_buttons.append(Button(res_rect, "Resume", "resume", "pause"))
+        
+        # Mute button
+        mute_rect = pygame.Rect(panel.centerx - 60, panel.centery + 50, 120, 40)
+        pygame.draw.rect(self.screen, (80, 40, 120), mute_rect, border_radius=5)
+        mute_txt = self.font.render("MUTE" if not self.muted else "UNMUTE", True, (255, 255, 255))
+        self.screen.blit(mute_txt, mute_txt.get_rect(center=mute_rect.center))
+        self.paused_buttons.append(Button(mute_rect, "Mute", "mute", "pause"))
 
-            # Active state for mute
-            active = (action == "mute" and self.muted)
-            if active:
-                bg = (140, 35, 35)
-                border = (255, 120, 80)
-            elif hovered:
-                bg = (60, 25, 80)
-                border = (245, 185, 45)
-            else:
-                bg = (34, 14, 50)
-                border = (90, 50, 115)
-            pygame.draw.rect(self.screen, bg, rect, border_radius=5)
-            pygame.draw.rect(self.screen, border, rect, 2, border_radius=5)
+    def blit_fit(self, surf, rect, scale):
+        w, h = rect.width, rect.height
+        sw, sh = surf.get_size()
+        aspect = sw / sh
+        if aspect > (w / h):
+            nw, nh = w, w / aspect
+        else:
+            nw, nh = h * aspect, h
+        size = (max(1, round(nw)), max(1, round(nh)))
+        cache_key = (id(surf), *size)
+        scaled = self.scaled_assets.get(cache_key)
+        if scaled is None:
+            scaled = pygame.transform.smoothscale(surf, size)
+            self.scaled_assets[cache_key] = scaled
+        self.screen.blit(scaled, scaled.get_rect(center=rect.center))
 
-            # Label
-            if action == "mute":
-                text_color = (255, 230, 200) if self.muted else (210, 200, 230)
-                label_text = "MUTED — CLICK TO UNMUTE" if self.muted else "SOUND ON — CLICK TO MUTE"
-            else:
-                text_color = (255, 230, 200) if hovered else (220, 200, 230)
-                label_text = label
-            lbl_surf = self.font.render(label_text, True, text_color)
-            self.screen.blit(lbl_surf, lbl_surf.get_rect(center=(rect.centerx, rect.centery - 4)))
+    def draw_hammer_icon(self, rect):
+        pygame.draw.rect(self.screen, (100, 150, 255), rect, border_radius=2)
+        pygame.draw.line(self.screen, (255, 255, 255), rect.topleft, rect.bottomright, 3)
 
-            # Sub-line: hotkey or volume level
-            if action in ("vol_down", "vol_up"):
-                vol_pct = round(self.sfx_volume * 100)
-                bar_w = 120
-                bar_x = rect.centerx - bar_w // 2
-                bar_y = rect.bottom - 14
-                pygame.draw.rect(self.screen, (15, 8, 25), (bar_x, bar_y, bar_w, 6), border_radius=2)
-                pygame.draw.rect(self.screen, (245, 185, 45),
-                                 (bar_x, bar_y, round(bar_w * self.sfx_volume), 6), border_radius=2)
-                vtxt = self.small.render(f"{vol_pct}%", True, (255, 220, 110))
-                self.screen.blit(vtxt, vtxt.get_rect(midright=(bar_x - 6, bar_y + 3)))
-                vtxt2 = self.small.render(f"{vol_pct}%", True, (255, 220, 110))
-                self.screen.blit(vtxt2, vtxt2.get_rect(midleft=(bar_x + bar_w + 6, bar_y + 3)))
-            else:
-                hint = self.small.render(f"[{sub_label}]", True, (150, 200, 240))
-                self.screen.blit(hint, hint.get_rect(midright=(rect.right - 8, rect.centery - 4)))
-
-            self.paused_buttons.append(Button(rect, label, action, "pause"))
-
-        # 5. Footer hint
-        footer = self.small.render("Press P or click RESUME to continue", True, (190, 160, 130))
-        self.screen.blit(footer, footer.get_rect(center=(panel.centerx, panel.bottom - 16)))
+    def draw_sell_icon(self, rect):
+        pygame.draw.rect(self.screen, (200, 100, 50), rect, border_radius=2)
+        pygame.draw.line(self.screen, (255, 255, 255), rect.topleft, rect.bottomright, 3)
 
     def draw_sidebar(self):
         x = VIEW_W
-        # Deep dark purple background with metallic borders
         pygame.draw.rect(self.screen, (22, 10, 30), (x, TOP_H, SIDEBAR_W, VIEW_H))
-        pygame.draw.line(self.screen, (120, 40, 175), (x, TOP_H), (x, TOP_H + VIEW_H), 3) # vertical divider
+        pygame.draw.line(self.screen, (120, 40, 175), (x, TOP_H), (x, TOP_H + VIEW_H), 3)
         
-        # Add a retro grid background pattern to the sidebar to make it look premium
-        for py in range(TOP_H + 10, TOP_H + VIEW_H, 40):
-            pygame.draw.line(self.screen, (32, 15, 45), (x, py), (x + SIDEBAR_W, py), 1)
-
-        # Title at the top
         title = self.font.render("YURI'S COMMAND", True, (245, 185, 45))
         self.screen.blit(title, (x + 22, TOP_H + 12))
         
-        # Credits display at top of sidebar
         credit_label = self.small.render("CREDITS", True, (185, 145, 85))
         self.screen.blit(credit_label, (x + 22, TOP_H + 36))
         credit_val = self.font.render(f"${self.credits}", True, (255, 220, 90))
         self.screen.blit(credit_val, (x + 22, TOP_H + 52))
         
-        # Draw Minimap
         self.draw_minimap(x + 22, TOP_H + 80)
-        
-        # Clear buttons list
         self.buttons = []
         
-        # Draw Category Tabs below minimap
-        tabs = [
-            ("bldg", "BLDG"),
-            ("defn", "DEFN"),
-            ("inf", "INF"),
-            ("veh", "VEH")
-        ]
-        tab_w = 50
-        tab_h = 24
-        tab_gap = 6
-        start_tx = x + 22
-        tab_y = TOP_H + 206
+        tabs = [("bldg", "BLDG"), ("defn", "DEFN"), ("inf", "INF"), ("veh", "VEH")]
+        tab_w, tab_h, tab_gap = 50, 24, 6
+        start_tx, tab_y = x + 22, TOP_H + 206
         for idx, (tab_id, label_str) in enumerate(tabs):
             tx = start_tx + idx * (tab_w + tab_gap)
             rect = pygame.Rect(tx, tab_y, tab_w, tab_h)
             is_active = (self.active_tab == tab_id)
-            
-            # Tab Styling
             bg_color = (130, 45, 185) if is_active else (35, 15, 50)
             border_color = (245, 185, 45) if is_active else (85, 45, 115)
             text_color = (255, 255, 255) if is_active else (155, 120, 175)
-            
-            # Double border on active tab for luxury feel
             pygame.draw.rect(self.screen, bg_color, rect, border_radius=4)
             pygame.draw.rect(self.screen, border_color, rect, 2, border_radius=4)
-            if is_active:
-                pygame.draw.rect(self.screen, (255, 220, 110), rect.inflate(-4, -4), 1, border_radius=2)
-                
             tab_lbl = self.small.render(label_str, True, text_color)
             self.screen.blit(tab_lbl, tab_lbl.get_rect(center=rect.center))
-            
-            # Store tab button for clicks
             self.buttons.append(Button(rect, label_str, tab_id, "tab"))
 
-        # Draw segmented Yuri-style Power Bar on the left
-        power_y = TOP_H + 238
-        power_h = 320
-        power_w = 10
-        power_x = x + 8
-        # Outer bezel
+        power_y, power_h, power_w, power_x = TOP_H + 238, 320, 10, x + 8
         pygame.draw.rect(self.screen, (12, 5, 20), (power_x - 2, power_y - 2, power_w + 4, power_h + 4), border_radius=3)
-        pygame.draw.rect(self.screen, (75, 30, 105), (power_x - 2, power_y - 2, power_w + 4, power_h + 4), 1, border_radius=3)
         
-        # Calculate Power Levels
         produced = 10 + sum(e.pw for e in self.entities if e.kind == "structure" and e.team == TEAM_RED and e.pw > 0)
         consumed = sum(abs(e.pw) for e in self.entities if e.kind == "structure" and e.team == TEAM_RED and e.pw < 0)
         
-        # Segmented colors
         segments = 32
         seg_h = power_h / segments
         for s in range(segments):
             sy = power_y + power_h - (s + 1) * seg_h
-            # Map segments bottom-to-top: first 30% red, next 20% yellow, top 50% green
             ratio = s / segments
-            if ratio < 0.3:
-                color = (205, 35, 20)
-            elif ratio < 0.5:
-                color = (235, 185, 35)
-            else:
-                color = (35, 195, 40)
-            # Draw segment (slightly smaller than full seg_h to show gaps)
+            color = (205, 35, 20) if ratio < 0.3 else (235, 185, 35) if ratio < 0.5 else (35, 195, 40)
             pygame.draw.rect(self.screen, color, (power_x, sy + 1, power_w, seg_h - 2))
             
-        # Draw pointer showing consumption vs production
         if produced > 0:
             ptr_ratio = clamp(consumed / produced, 0.05, 0.95)
             ptr_y = power_y + power_h - ptr_ratio * power_h
         else:
             ptr_y = power_y + power_h - 10
-        # Pointer shapes (gold pointer pointing to the level)
-        pygame.draw.polygon(self.screen, (245, 185, 45), [
-            (power_x - 7, ptr_y - 5),
-            (power_x - 1, ptr_y),
-            (power_x - 7, ptr_y + 5)
-        ])
+        pygame.draw.polygon(self.screen, (245, 185, 45), [(power_x - 7, ptr_y - 5), (power_x - 1, ptr_y), (power_x - 7, ptr_y + 5)])
         pygame.draw.line(self.screen, (245, 185, 45), (power_x - 2, ptr_y), (power_x + power_w + 2, ptr_y), 2)
 
-        # Draw 2-Column Construction Card Grid (right of power bar)
-        # Select active tab items
         if self.active_tab == "bldg":
-            active_items = [
-                ("powerplant", "1", "Build"),
-                ("barracks", "2", "Build"),
-                ("warfactory", "3", "Build"),
-                ("refinery", "4", "Build"),
-                ("radar", "7", "Build"),
-                ("repair", "H", "Tool"),
-                ("sell", "X", "Tool")
-            ]
+            active_items = [("powerplant", "1", "Build"), ("barracks", "2", "Build"), ("warfactory", "3", "Build"), ("refinery", "4", "Build"), ("radar", "7", "Build"), ("repair", "H", "Tool"), ("sell", "X", "Tool")]
         elif self.active_tab == "defn":
-            active_items = [
-                ("turret", "5", "Build"),
-                ("tesla", "6", "Build"),
-                ("wall", "8", "Build")
-            ]
+            active_items = [("turret", "5", "Build"), ("tesla", "6", "Build"), ("wall", "8", "Build")]
         elif self.active_tab == "inf":
-            active_items = [
-                ("conscript", "Q", "Train"),
-                ("dog", "W", "Train"),
-                ("tesla_trooper", "E", "Train")
-            ]
-        else: # veh
-            active_items = [
-                ("rhino", "A", "Train"),
-                ("v3", "S", "Train"),
-                ("apocalypse", "D", "Train")
-            ]
+            active_items = [("conscript", "Q", "Train"), ("dog", "W", "Train"), ("tesla_trooper", "E", "Train")]
+        else:
+            active_items = [("rhino", "A", "Train"), ("v3", "S", "Train"), ("apocalypse", "D", "Train")]
             
-        grid_start_x = x + 24
-        grid_start_y = TOP_H + 238
-        card_w = 104
-        card_h = 74
-        gap_x = 8
-        gap_y = 8
-        
+        grid_start_x, grid_start_y, card_w, card_h, gap_x, gap_y = x + 24, TOP_H + 238, 104, 74, 8, 8
         for idx, (item_id, hotkey, item_kind) in enumerate(active_items):
-            col = idx % 2
-            row = idx // 2
-            cx = grid_start_x + col * (card_w + gap_x)
-            cy = grid_start_y + row * (card_h + gap_y)
+            col, row = idx % 2, idx // 2
+            cx, cy = grid_start_x + col * (card_w + gap_x), grid_start_y + row * (card_h + gap_y)
             card_rect = pygame.Rect(cx, cy, card_w, card_h)
             
-            # 1. Tech requirements check
             locked = False
-            lock_reason = ""
             if item_kind == "Train":
-                if item_id in ("conscript", "dog", "tesla_trooper"):
-                    if not any(e.team == TEAM_RED and e.type == "barracks" for e in self.entities):
-                        locked = True
-                        lock_reason = "REQ: BARRACKS"
-                if item_id in ("rhino", "v3", "apocalypse"):
-                    if not any(e.team == TEAM_RED and e.type == "warfactory" for e in self.entities):
-                        locked = True
-                        lock_reason = "REQ: FACTORY"
+                if item_id in ("conscript", "dog", "tesla_trooper") and not any(e.type == "barracks" for e in self.entities if e.team == TEAM_RED): locked = True
+                if item_id in ("rhino", "v3", "apocalypse") and not any(e.type == "warfactory" for e in self.entities if e.team == TEAM_RED): locked = True
                         
-            if item_kind == "Build":
-                data = STRUCT_DEFS[item_id]
-            elif item_kind == "Train":
-                data = UNIT_DEFS[item_id]
-            else:
-                data = {
-                    "repair": {
-                        "name": "Repair",
-                        "cost": REPAIR_COST,
-                        "color": (90, 190, 220),
-                    },
-                    "sell": {
-                        "name": "Sell",
-                        "cost": 0,
-                        "color": (230, 150, 70),
-                    },
-                }[item_id]
+            data = STRUCT_DEFS[item_id] if item_kind == "Build" else UNIT_DEFS[item_id] if item_kind == "Train" else {"repair": {"name": "Repair", "cost": REPAIR_COST}, "sell": {"name": "Sell", "cost": 0}}[item_id]
             cost = data["cost"]
             
-            # Hover / selected highlight
             mouse_pos = pygame.mouse.get_pos()
             hovered = card_rect.collidepoint(mouse_pos)
+            is_active_placing = (self.placing == item_id) or (item_id == "repair" and self.repair_mode) or (item_id == "sell" and self.sell_mode)
             
-            # Highlight gold if placing or active
-            is_active_placing = (
-                (self.placing == item_id)
-                or (item_id == "repair" and self.repair_mode)
-                or (item_id == "sell" and self.sell_mode)
-            )
-            
-            # Card border and bg colors
-            bg_color = (25, 12, 38)
-            if locked:
-                bg_color = (15, 8, 22)
-            border_color = (90, 50, 115)
-            if hovered and not locked:
-                border_color = (165, 80, 220)
-            if is_active_placing:
-                border_color = (245, 185, 45)
-                
-            # Draw Card Background and border
+            bg_color = (15, 8, 22) if locked else (25, 12, 38)
+            border_color = (245, 185, 45) if is_active_placing else (165, 80, 220) if hovered and not locked else (90, 50, 115)
             pygame.draw.rect(self.screen, bg_color, card_rect, border_radius=4)
             pygame.draw.rect(self.screen, border_color, card_rect, 2, border_radius=4)
             
-            # 2. Draw Sprite Icon (with fallbacks)
             icon_key = f"red_{item_id}"
-            if item_id == "conscript":
-                icon_key = "red_troop"
-            elif item_id == "tesla_trooper":
-                icon_key = "red_tesla_trooper"
+            if item_id == "conscript": icon_key = "red_troop"
+            elif item_id == "tesla_trooper": icon_key = "red_tesla_trooper"
             icon_rect = pygame.Rect(cx + 12, cy + 6, card_w - 24, 46)
             
             asset = self.assets.get(icon_key)
-            if item_id == "repair":
-                self.draw_hammer_icon(icon_rect)
-            elif item_id == "sell":
-                self.draw_sell_icon(icon_rect)
-            elif asset:
-                self.blit_fit(asset, icon_rect, 1.0)
-            else:
-                # Color block representing item
-                color = data.get("color", (120, 60, 160))
-                pygame.draw.rect(self.screen, color, icon_rect.inflate(-4, -4), border_radius=2)
-                
-            # Gray scale shade if locked or player has insufficient credits
+            if item_id == "repair": self.draw_hammer_icon(icon_rect)
+            elif item_id == "sell": self.draw_sell_icon(icon_rect)
+            elif asset: self.blit_fit(asset, icon_rect, 1.0)
+            else: pygame.draw.rect(self.screen, (120, 60, 160), icon_rect.inflate(-4, -4), border_radius=2)
+            
             if locked or self.credits < cost:
                 shade = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
                 shade.fill((0, 0, 0, 120) if locked else (200, 30, 20, 60))
                 self.screen.blit(shade, (cx, cy))
                 
-            # 3. Text indicators
-            # Hotkey in top-left
             hk_lbl = self.small.render(f"[{hotkey}]", True, (80, 200, 240))
             self.screen.blit(hk_lbl, (cx + 6, cy + 4))
-            
-            # Name at bottom-left
-            name_str = data["name"].upper().split()[0] # first word
-            name_lbl = self.small.render(name_str, True, (255, 255, 255))
+            name_lbl = self.small.render(data["name"].upper().split()[0], True, (255, 255, 255))
             self.screen.blit(name_lbl, (cx + 6, cy + 54))
-            
-            # Cost at bottom-right
             cost_text = f"${cost}" if cost else "50%"
             cost_lbl = self.small.render(cost_text, True, (245, 185, 45))
             self.screen.blit(cost_lbl, (cx + card_w - cost_lbl.get_width() - 6, cy + 54))
             
-            # 4. Status overlay text (Locked, Ready, Training Progress)
             if locked:
                 lock_lbl = self.small.render("LOCKED", True, (255, 50, 50))
-                # Draw black label background
                 pygame.draw.rect(self.screen, (10, 5, 15), (cx + 6, cy + 24, card_w - 12, 18), border_radius=2)
                 self.screen.blit(lock_lbl, lock_lbl.get_rect(center=(cx + card_w // 2, cy + 33)))
             elif is_active_placing:
-                # Flashing READY text for buildings
                 if int(pygame.time.get_ticks() / 300) % 2 == 0:
                     pygame.draw.rect(self.screen, (12, 5, 20), (cx + 12, cy + 24, card_w - 24, 18), border_radius=2)
                     active_label = "REPAIR" if item_id == "repair" else "SELL" if item_id == "sell" else "READY"
                     ready_lbl = self.small.render(active_label, True, (245, 185, 45))
                     self.screen.blit(ready_lbl, ready_lbl.get_rect(center=(cx + card_w // 2, cy + 33)))
             elif item_kind == "Train" and self.training_queue:
-                # Check queue count
                 queue_count = sum(1 for q in self.training_queue if q == item_id)
                 if queue_count > 0:
-                    # Draw training progress shade for the active one
                     if self.training_queue[0] == item_id:
                         train_time = max(3, data["cost"] / 200)
                         pct = clamp(self.training_timer / train_time, 0, 1)
-                        # Vertical wipe shade
                         wipe_h = round(card_h * (1.0 - pct))
                         if wipe_h > 0:
                             wipe_surf = pygame.Surface((card_w, wipe_h), pygame.SRCALPHA)
                             wipe_surf.fill((0, 0, 0, 150))
                             self.screen.blit(wipe_surf, (cx, cy))
-                        # Display percentage
                         pct_lbl = self.small.render(f"{round(pct * 100)}%", True, (255, 255, 255))
                         pygame.draw.rect(self.screen, (12, 5, 20), (cx + card_w - 36, cy + 4, 30, 15), border_radius=2)
                         self.screen.blit(pct_lbl, pct_lbl.get_rect(center=(cx + card_w - 21, cy + 11)))
                     else:
-                        # Draw HOLD queue indicator
                         hold_lbl = self.small.render(f"Q: {queue_count}", True, (215, 175, 120))
                         pygame.draw.rect(self.screen, (12, 5, 20), (cx + card_w - 36, cy + 4, 30, 15), border_radius=2)
                         self.screen.blit(hold_lbl, hold_lbl.get_rect(center=(cx + card_w - 21, cy + 11)))
                         
-            # Store button for clicks
-            if item_kind == "Build":
-                button_kind = "build"
-            elif item_kind == "Train":
-                button_kind = "train"
-            else:
-                button_kind = "tool"
+            button_kind = "build" if item_kind == "Build" else "train" if item_kind == "Train" else "tool"
             self.buttons.append(Button(card_rect, data["name"], item_id, button_kind))
             
-        # Draw selected units info console (Yuri vector display)
         info_y = TOP_H + VIEW_H - 104
         pygame.draw.rect(self.screen, (12, 6, 20), (x + 16, info_y, SIDEBAR_W - 32, 82), border_radius=5)
         pygame.draw.rect(self.screen, (120, 45, 175), (x + 16, info_y, SIDEBAR_W - 32, 82), 1, border_radius=5)
-        # Vector screen grid line highlights
-        pygame.draw.line(self.screen, (40, 18, 55), (x + 16, info_y + 24), (x + SIDEBAR_W - 16, info_y + 24), 1)
         
         selected = self.selected()
         if selected:
             first = selected[0]
             name = STRUCT_DEFS[first.type]["name"] if first.kind == "structure" else UNIT_DEFS[first.type]["name"]
-            lines = [
-                f">> COMMAND: {name.upper()}",
-                f">> INTEGRITY: {round(first.hp)} / {round(first.max_hp)} HP",
-                f">> SECTOR CODES: LOCKED ({len(selected)} UNIT)"
-            ]
+            lines = [f">> COMMAND: {name.upper()}", f">> INTEGRITY: {round(first.hp)} / {round(first.max_hp)} HP", f">> SECTOR CODES: LOCKED ({len(selected)} UNIT)"]
         else:
-            lines = [
-                ">> COMMUNICATIONS ACTIVE",
-                ">> AWAITING FIELD SELECTION",
-                ">> USSR TACTICAL GRID LINKED"
-            ]
+            lines = [">> COMMUNICATIONS ACTIVE", ">> AWAITING FIELD SELECTION", ">> USSR TACTICAL GRID LINKED"]
         for i, line in enumerate(lines):
-            surf = self.small.render(line, True, (245, 160, 40) if selected else (145, 210, 80)) # Amber if active, Green/Greenish if idle
+            surf = self.small.render(line, True, (245, 160, 40) if selected else (145, 210, 80))
             self.screen.blit(surf, (x + 24, info_y + 10 + i * 22))
 
     def draw_minimap(self, x, y):
         rect = pygame.Rect(x, y, MINIMAP_W, MINIMAP_H)
         pygame.draw.rect(self.screen, (8, 18, 16), rect)
-        
-        # Double gold & purple frames
         pygame.draw.rect(self.screen, (245, 185, 45), rect.inflate(4, 4), 2, border_radius=4)
         pygame.draw.rect(self.screen, (120, 45, 175), rect.inflate(8, 8), 2, border_radius=6)
-        
         if self.map_surface:
             mini = pygame.transform.smoothscale(self.map_surface, (MINIMAP_W, MINIMAP_H))
             mini.set_alpha(125)
             self.screen.blit(mini, rect)
         for ore in self.ore:
             if ore.available:
-                px = x + ore.x / WORLD_W * MINIMAP_W
-                py = y + ore.y / WORLD_H * MINIMAP_H
+                px, py = x + ore.x / WORLD_W * MINIMAP_W, y + ore.y / WORLD_H * MINIMAP_H
                 pygame.draw.circle(self.screen, (245, 195, 45), (round(px), round(py)), 2)
         for entity in self.entities:
-            px = x + entity.center()[0] / WORLD_W * MINIMAP_W
-            py = y + entity.center()[1] / WORLD_H * MINIMAP_H
+            px, py = x + entity.center()[0] / WORLD_W * MINIMAP_W, y + entity.center()[1] / WORLD_H * MINIMAP_H
             color = (245, 40, 35) if entity.team == TEAM_RED else (50, 130, 245)
             pygame.draw.circle(self.screen, color, (round(px), round(py)), 2 if entity.kind == "unit" else 3)
-        half_w = VIEW_W / 2 / self.camera.zoom / WORLD_W * MINIMAP_W
-        half_h = VIEW_H / 2 / self.camera.zoom / WORLD_H * MINIMAP_H
-        cx = x + self.camera.x / WORLD_W * MINIMAP_W
-        cy = y + self.camera.y / WORLD_H * MINIMAP_H
+        half_w, half_h = VIEW_W / 2 / self.camera.zoom / WORLD_W * MINIMAP_W, VIEW_H / 2 / self.camera.zoom / WORLD_H * MINIMAP_H
+        cx, cy = x + self.camera.x / WORLD_W * MINIMAP_W, y + self.camera.y / WORLD_H * MINIMAP_H
         pygame.draw.rect(self.screen, (245, 215, 90), (cx - half_w, cy - half_h, half_w * 2, half_h * 2), 1)
 
     def draw_bottombar(self):
@@ -3058,6 +1741,47 @@ class Game:
         self.screen.blit(title_s, title_s.get_rect(center=(rect.centerx, rect.y + 48)))
         self.screen.blit(sub_s, sub_s.get_rect(center=(rect.centerx, rect.y + 96)))
 
+    def draw_difficulty_menu(self):
+        self.difficulty_buttons = []
+        overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        self.screen.blit(overlay, (0, 0))
+
+        panel = pygame.Rect(0, 0, 520, 250)
+        panel.center = (SCREEN_W // 2, SCREEN_H // 2)
+        pygame.draw.rect(self.screen, (25, 18, 14), panel, border_radius=8)
+        pygame.draw.rect(self.screen, (210, 55, 35), panel, 2, border_radius=8)
+
+        title = self.big.render("RED ALERT MINI", True, (250, 70, 45))
+        self.screen.blit(title, title.get_rect(center=(panel.centerx, panel.y + 48)))
+        subtitle = self.font.render("Select your difficulty", True, (230, 190, 135))
+        self.screen.blit(subtitle, subtitle.get_rect(center=(panel.centerx, panel.y + 94)))
+
+        choices = (
+            ("easy", "EASY", "1", "90 sec waves"),
+            ("medium", "MEDIUM", "2", "60 sec waves"),
+            ("hard", "HARD", "3", "40 sec waves"),
+        )
+        button_width, button_height, gap = 142, 76, 16
+        total_width = button_width * len(choices) + gap * (len(choices) - 1)
+        start_x = panel.centerx - total_width // 2
+        button_y = panel.y + 132
+
+        for index, (difficulty, label, hotkey, detail) in enumerate(choices):
+            rect = pygame.Rect(
+                start_x + index * (button_width + gap),
+                button_y,
+                button_width,
+                button_height,
+            )
+            pygame.draw.rect(self.screen, (45, 24, 32), rect, border_radius=5)
+            pygame.draw.rect(self.screen, (245, 185, 45), rect, 2, border_radius=5)
+            label_surf = self.font.render(f"{label} [{hotkey}]", True, (255, 220, 120))
+            detail_surf = self.small.render(detail, True, (220, 195, 165))
+            self.screen.blit(label_surf, label_surf.get_rect(center=(rect.centerx, rect.y + 25)))
+            self.screen.blit(detail_surf, detail_surf.get_rect(center=(rect.centerx, rect.y + 52)))
+            self.difficulty_buttons.append(Button(rect, label, difficulty, "difficulty"))
+
     def on_view(self, sx, sy, pad=0):
         return -pad <= sx <= VIEW_W + pad and TOP_H - pad <= sy <= TOP_H + VIEW_H + pad
 
@@ -3076,7 +1800,7 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
-def main():
+async def main():
     pygame.init()
     pygame.display.set_caption("Red Alert Mini - Pygame")
     screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
@@ -3104,11 +1828,13 @@ def main():
             game.update(min(dt, 0.05))
             game.draw()
             pygame.display.flip()
+            await asyncio.sleep(0)
         except Exception:
             import traceback
             traceback.print_exc()
             pygame.display.flip()
+            await asyncio.sleep(0)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -1,0 +1,110 @@
+name: Deploy game to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pygbag and Pygame Community Edition
+        run: python -m pip install pygbag==0.9.3 pygame-ce
+
+      - name: Prepare game source
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_dir="${RUNNER_TEMP}/red-alert-mini"
+          mkdir -p "$app_dir/Sounds"
+          cp main.py "$app_dir/main.py"
+          cp -R assets "$app_dir/assets"
+          cp -R Sounds/web_audio "$app_dir/Sounds/web_audio"
+
+          if [[ ! -f "$app_dir/Sounds/web_audio/Clicking_Sound.ogg" ]]; then
+            echo "Sounds/web_audio/Clicking_Sound.ogg is required for the web build." >&2
+            exit 1
+          fi
+
+      - name: Build browser game
+        run: >-
+          pygbag --build
+          --ume_block 1
+          --width 1280
+          --height 760
+          --title "Red Alert Mini"
+          --app_name red-alert-mini
+          "${RUNNER_TEMP}/red-alert-mini"
+
+      - name: Include BrowserFS runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          web_dir="${RUNNER_TEMP}/red-alert-mini/build/web"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://cdn.jsdelivr.net/npm/browserfs@1.4.3/dist/browserfs.min.js \
+            --output "$web_dir/browserfs.min.js"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://cdn.jsdelivr.net/npm/browserfs@1.4.3/LICENSE \
+            --output "$web_dir/BrowserFS-LICENSE.txt"
+          python - "$web_dir/index.html" <<'PY'
+          from pathlib import Path
+          import sys
+
+          index = Path(sys.argv[1])
+          html = index.read_text()
+          browserfs_tag = '<script src="https://pygame-web.github.io/cdn/0.9.3//browserfs.min.js"></script>'
+          if browserfs_tag not in html:
+              raise SystemExit("Expected Pygbag BrowserFS script tag was not found.")
+          index.write_text(html.replace(browserfs_tag, '<script src="browserfs.min.js"></script>'))
+          PY
+
+      - name: Prepare Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          site_dir="${RUNNER_TEMP}/pages-site"
+          mkdir -p "$site_dir"
+          cp -R "${RUNNER_TEMP}/red-alert-mini/build/web/." "$site_dir/"
+          if [[ ! -f "$site_dir/red-alert-mini.tar.gz" ]]; then
+            echo "Pygbag did not produce the browser game archive." >&2
+            exit 1
+          fi
+          rm -f "$site_dir/red-alert-mini.apk"
+          touch "$site_dir/.nojekyll"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/pages-site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
