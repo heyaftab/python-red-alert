@@ -304,6 +304,10 @@ python3 pathfinding_debug.py     # A* benchmarks and terrain walkability stats
 
 📚 **Docs:** [Navigation System](NAVIGATION_SYSTEM.md) · [Quick Start](QUICK_START_NAVIGATION.md)
 
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
+
 <div align="center">
 
 <br/>
