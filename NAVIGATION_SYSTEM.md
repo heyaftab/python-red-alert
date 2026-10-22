@@ -1,51 +1,84 @@
-# Navigation Mask & Pathfinding System
+<!-- markdownlint-disable MD041 -->
+![Navigation mask and pathfinding banner](assets/nav-banner.svg)
+
+**Automatic collision detection and A* pathfinding for your game.** This system analyzes the map image, detects orange and brown cliffs, and generates a binary collision map for fast pathfinding.
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white) ![A star algorithm](https://img.shields.io/badge/Algorithm-A*-dc2626?style=for-the-badge) ![85 by 47 grid](https://img.shields.io/badge/Grid-85%C3%9747-f59e0b?style=for-the-badge) ![20 pixel tiles](https://img.shields.io/badge/Tile-20px-0ea5e9?style=for-the-badge) ![Approximately 4 KB mask](https://img.shields.io/badge/Mask-~4KB-22c55e?style=for-the-badge)
+
+[How it works](#how-it-works) · [Integration](#integration) · [API reference](#api-reference) · [Thresholds](#thresholds) · [Performance](#performance) · [Troubleshooting](#troubleshooting)
+
+![Section divider](assets/nav-divider.svg)
 
 ## Overview
 
-This system provides automatic collision detection and A* pathfinding for your game. It analyzes the map image to detect obstacles (orange/brown cliffs) and generates a binary collision map for efficient pathfinding.
+The navigation pipeline reads `assets/Map.png`, classifies terrain pixels, reduces the map to a tile grid, then uses A* to find paths around obstacles.
 
-## Files
+### Project files
 
-- **`nav_mask.py`** - Navigation mask generator (analyzes map image)
-- **`pathfinding.py`** - A* pathfinding algorithm with collision detection
-- **`pathfinding_example.py`** - Usage examples and integration guide
-- **`nav_mask.pkl`** - Generated binary collision map (pickled)
-- **`nav_mask_vis.png`** - Visual representation of the collision map
+| File | Role |
+| :--- | :--- |
+| `nav_mask.py` | Analyzes the map image and generates the navigation mask |
+| `pathfinding.py` | A* pathfinding algorithm with collision detection |
+| `pathfinding_example.py` | Usage examples and integration guide |
+| `nav_mask.pkl` | Generated, pickled binary collision map |
+| `nav_mask_vis.png` | Visual representation of the collision map |
+
+![Section divider](assets/nav-divider.svg)
 
 ## How It Works
 
-### 1. Map Analysis (`nav_mask.py`)
+```text
+  Map.png           Color classification       20×20 tiles            A* search
+ ┌───────────┐      ┌────────────────┐      ┌──────────────┐      ┌────────────┐
+ │ 1688×932  │ ───► │ blocked / open │ ───► │ 85×47 grid   │ ───► │ unit path  │
+ │  pixels   │      │ / unknown      │      │ 0=open 1=blocked │   │ (x, y) ... │
+ └───────────┘      └────────────────┘      └──────────────┘      └────────────┘
+```
 
-The script analyzes `assets/Map.png` and classifies pixels:
+### 1. Map analysis
 
-- **Orange/Brown Pixels** → Blocked terrain (cliffs, walls)
-- **Green Pixels** → Walkable ground
-- **Sandy/Tan Pixels** → Walkable ground
-- **Other Colors** → Unknown (treated conservatively)
+`nav_mask.py` analyzes `assets/Map.png` and assigns each pixel a terrain category:
 
-### 2. Collision Map Generation
+| Pixel color | Meaning | Result |
+| :--- | :--- | :--- |
+| Orange or brown | Cliffs and walls | Blocked |
+| Green | Open ground | Walkable |
+| Sandy or tan | Open ground | Walkable |
+| Other colors | Unclassified | Unknown; handled conservatively |
 
-The map is divided into 20×20 pixel tiles. Each tile is marked as:
-- **1** = Blocked (>30% obstacle pixels)
-- **0** = Walkable (>70% open ground)
+### 2. Collision map generation
 
-**Map Statistics:**
-- Map size: 1688×932 pixels
-- Tile grid: 85×47 tiles (20px per tile)
-- Blocked tiles: 83
-- Walkable tiles: 3912
+The map is divided into **20×20 pixel tiles**. Each tile is marked as follows:
 
-### 3. Pathfinding Algorithm
+| Value | State | Rule |
+| :---: | :--- | :--- |
+| `1` | Blocked | More than 30% obstacle pixels |
+| `0` | Walkable | More than 70% open ground |
 
-The `Pathfinder` class implements **A* pathfinding**:
-- Finds optimal paths avoiding obstacles
-- Supports diagonal movement (with validation)
-- Caches recently computed paths for performance
-- Handles unreachable destinations gracefully
+| Map size | Tile grid | Blocked tiles | Walkable tiles |
+| :---: | :---: | :---: | :---: |
+| 1688×932 px | 85×47 (20 px per tile) | 83 | 3912 |
 
-## Integration into main.py
+### 3. Pathfinding algorithm
 
-### Basic Setup
+The `Pathfinder` class implements A* pathfinding. It finds routes around obstacles, supports validated diagonal movement, caches recently computed paths, and handles unreachable destinations gracefully.
+
+Example search (diagonal movement is allowed):
+
+```text
+  S ● ● ● ● · · · ·        S = start      G = goal
+  · █ █ █ ● · · · ·        █ = blocked    · = walkable
+  · █ █ █ · ● · · ·        ● = path
+  · · · · · · ● ● G
+```
+
+![Section divider](assets/nav-divider.svg)
+
+## Integration
+
+Add pathfinding to `main.py` in three steps.
+
+### 1. Basic setup
 
 ```python
 from pathfinding import initialize_pathfinder, find_path
@@ -55,60 +88,56 @@ from nav_mask import is_walkable
 pathfinder = initialize_pathfinder()
 ```
 
-### Finding Paths for Units
+### 2. Find paths for units
 
 ```python
 # When a unit needs to move:
 path = find_path(unit.x, unit.y, target_x, target_y)
 
 if path:
-    unit.set_path(path)  # Path is list of (x, y) tuples
+    unit.set_path(path)  # Path is a list of (x, y) tuples
     unit.path_index = 0
 else:
     print("No path available!")
 ```
 
-### Moving Units Along Path
+### 3. Move units along a path
 
 ```python
 def update_unit(unit, dt):
     if unit.path and unit.path_index < len(unit.path):
         waypoint = unit.path[unit.path_index]
-        
-        # Move towards waypoint
         dx = waypoint[0] - unit.x
         dy = waypoint[1] - unit.y
         dist = (dx**2 + dy**2) ** 0.5
-        
+
         if dist < unit.speed * dt:
-            # Reached waypoint, move to next
             unit.path_index += 1
         else:
-            # Move towards waypoint
             unit.x += (dx / dist) * unit.speed * dt
             unit.y += (dy / dist) * unit.speed * dt
 ```
 
-### Collision Checking
+### Collision checks
 
 ```python
 from pathfinding import get_pathfinder
 
 pathfinder = get_pathfinder()
 
-# Check if a tile is blocked
 if pathfinder.is_tile_blocked(tile_x, tile_y):
     print("Can't build here!")
 
-# Find nearest valid position
 valid_pos = pathfinder.get_nearest_walkable_point(x, y)
 if valid_pos:
     print(f"Move to: {valid_pos}")
 ```
 
+![Section divider](assets/nav-divider.svg)
+
 ## API Reference
 
-### Pathfinder Class
+### Pathfinder class
 
 ```python
 pathfinder = Pathfinder(nav_mask_path="nav_mask.pkl", tile_size=20)
@@ -124,105 +153,109 @@ pixel_x, pixel_y = pathfinder.tile_to_pixel_center(tile_x, tile_y)
 if not pathfinder.is_tile_blocked(tile_x, tile_y):
     print("Walkable!")
 
-# Find nearest walkable point (useful for invalid destinations)
+# Find a nearby walkable point
 valid_pos = pathfinder.get_nearest_walkable_point(x, y, search_radius=5)
 
 # Clear cached paths
 pathfinder.clear_cache()
 ```
 
-### Convenience Functions
+### Convenience functions
 
 ```python
 from pathfinding import initialize_pathfinder, find_path, get_pathfinder
 
-# Initialize global pathfinder
 pathfinder = initialize_pathfinder()
-
-# Use global pathfinder
 path = find_path(start_x, start_y, goal_x, goal_y)
-
-# Get the global instance
 pf = get_pathfinder()
 ```
 
-### Navigation Mask Functions
+### Navigation mask functions
 
 ```python
 from nav_mask import load_nav_mask, is_walkable, get_walkable_neighbors, save_nav_mask
 
-# Load the collision map
 nav_mask = load_nav_mask("nav_mask.pkl")
 
-# Check if a tile is walkable
 if is_walkable(nav_mask, tile_x, tile_y):
     print("Can walk here")
 
-# Get adjacent walkable tiles
-neighbors = get_walkable_neighbors(nav_mask, tile_x, tile_y, include_diagonals=True)
+neighbors = get_walkable_neighbors(
+    nav_mask, tile_x, tile_y, include_diagonals=True
+)
 ```
 
-## Color Detection Thresholds
+![Section divider](assets/nav-divider.svg)
 
-The system detects terrain types using RGB color thresholds:
+## Thresholds
 
-- **Orange/Brown (Obstacles)**
-  - R > 150, G < 150, B < 100
-  - R > G and R > B
+Terrain is detected with RGB color thresholds:
 
-- **Green (Walkable)**
-  - G > 100, R < 150, B < 120
-  - G > R and G > B
+| Terrain | Rules | Result |
+| :--- | :--- | :---: |
+| Orange or brown | `R > 150`, `G < 150`, `B < 100`; `R > G` and `R > B` | Blocked |
+| Green | `G > 100`, `R < 150`, `B < 120`; `G > R` and `G > B` | Walkable |
+| Sandy or tan | `R > 150`, `G > 120`, `B < 100`; adjusted R-G difference and `G > B` | Walkable |
 
-- **Sandy/Tan (Walkable)**
-  - R > 150, G > 120, B < 100
-  - Adjusted R-G difference and G > B
+To tune detection, edit `get_color_category()` in `nav_mask.py`, then regenerate the mask.
 
-To adjust detection, modify the `get_color_category()` function in `nav_mask.py` and regenerate the mask.
+![Section divider](assets/nav-divider.svg)
 
-## Performance Considerations
+## Performance
 
-- **Path caching**: Recently computed paths are cached to avoid recomputation
-- **Tile size**: Larger tiles = faster pathfinding but less precision (currently 20px)
-- **Grid size**: 85×47 tiles is reasonable for typical queries
-- **Memory**: Navigation mask is ~4KB (47×85 bytes)
+| Feature | Details |
+| :--- | :--- |
+| Path caching | Reuses recently computed paths instead of recomputing them |
+| Tile size | Larger tiles improve speed but reduce precision; the current size is 20 px |
+| Grid size | The 85×47 tile grid is suitable for typical queries |
+| Memory | The mask uses about 4 KB (47×85 bytes) |
+
+![Section divider](assets/nav-divider.svg)
 
 ## Troubleshooting
 
 ### No path found
 
-- Verify the destination is walkable: `is_walkable(nav_mask, goal_tx, goal_ty)`
-- Try `get_nearest_walkable_point()` to find a valid destination
-- Check if start and goal are on different isolated regions
+- Verify that the destination is walkable: `is_walkable(nav_mask, goal_tx, goal_ty)`.
+- Try `get_nearest_walkable_point()` to find a valid destination.
+- Check whether the start and goal are in different isolated regions.
 
-### Units stuck in obstacles
+### Units get stuck in obstacles
 
-- Ensure buildings are added to the collision map or handled separately
-- Verify pathfinding initialization: `pathfinder = initialize_pathfinder()`
-- Check tile coordinates are within bounds: `0 ≤ tx < 85`, `0 ≤ ty < 47`
+- Make sure buildings are added to the collision map or handled separately.
+- Verify pathfinding initialization: `pathfinder = initialize_pathfinder()`.
+- Check that tile coordinates are within bounds: `0 ≤ tx < 85`, `0 ≤ ty < 47`.
 
 ### Performance issues
 
-- Clear cache periodically: `pathfinder.clear_cache()`
-- Consider pre-computing paths during idle time
-- Use shorter search paths or waypoint networks for large distances
+- Clear the cache periodically: `pathfinder.clear_cache()`.
+- Consider precomputing paths during idle time.
+- Use shorter search paths or waypoint networks for large distances.
+
+![Section divider](assets/nav-divider.svg)
 
 ## Regenerating the Navigation Mask
 
-If you modify the map image, regenerate the collision map:
+If you change the map image, rebuild the collision map:
 
 ```bash
 python3 nav_mask.py
 ```
 
-This will create:
-- `nav_mask.pkl` - Updated collision map
-- `nav_mask_vis.png` - Updated visualization
+This creates:
+
+| Output | Description |
+| :--- | :--- |
+| `nav_mask.pkl` | Updated collision map |
+| `nav_mask_vis.png` | Updated visualization |
 
 ## Visualization
 
-The `nav_mask_vis.png` file shows:
-- **Green areas** = Walkable terrain (open ground)
-- **Red areas** = Blocked terrain (cliffs/obstacles)
+`nav_mask_vis.png` shows the result at a glance. Use it to verify that collision detection is working correctly.
 
-Use this to verify the collision detection is working correctly.
+| Color | Meaning |
+| :---: | :--- |
+| Green | Walkable terrain (open ground) |
+| Red | Blocked terrain (cliffs and obstacles) |
+
+![Navigation system footer](assets/nav-divider.svg)
