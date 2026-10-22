@@ -80,7 +80,7 @@ DIFFICULTIES = {
         "enemy_atk": 1.3,
         "wave_interval": 40,
         "max_wave_count": 99,
-        "start_credits": 1000,
+        "start_credits": 2500,
         "enemy_count_base": 4,
         "enemy_count_per_wave": 3,
     },
@@ -163,6 +163,19 @@ UNIT_DEFS = {
         "size": 20,
         "cost": 2000,
         "color": (105, 28, 20),
+        "category": "vehicle",
+    },
+    "harvester": {
+        "name": "Ore Harvester",
+        "hp": 420,
+        "spd": 48,
+        "atk": 0,
+        "range": 0,
+        "atk_spd": 99,
+        "sight": 0,
+        "size": 22,
+        "cost": 0,
+        "color": (220, 175, 45),
         "category": "vehicle",
     },
     "gi": {
@@ -306,6 +319,7 @@ ENTITY_SPRITE_TYPES = {
     "grizzly": "rhino_0",
     "v3": "v3",
     "apocalypse": "apocalypse",
+    "harvester": "rhino",
     "prism": "apocalypse",
 }
 
@@ -377,6 +391,9 @@ class Entity:
     rally_y: float = 0
     path: list[tuple[float, float]] = field(default_factory=list)
     path_goal: tuple[float, float] | None = None
+    cargo: int = 0
+    harvest_timer: float = 0
+    ore_index: int | None = None
 
     def center(self):
         return self.x + self.w / 2, self.y + self.h / 2
@@ -391,6 +408,7 @@ class Ore:
     y: float
     available: bool = True
     respawn: float = 0
+    value: int = 250
 
 
 @dataclass
@@ -508,6 +526,8 @@ class NavigationGrid:
         return self.is_walkable_cell(*self.cell(wx, wy), ignore_buildings)
 
     def rect_walkable_for_building(self, rect):
+        if rect.left < 0 or rect.top < 0 or rect.right > self.world_w or rect.bottom > self.world_h:
+            return False
         start_gx = max(0, rect.left // self.tile_size)
         end_gx = min(self.cols - 1, (rect.right - 1) // self.tile_size)
         start_gy = max(0, rect.top // self.tile_size)
@@ -613,6 +633,7 @@ class Game:
     tesla_zaps: list[TeslaZap] = field(default_factory=list)
     buttons: list[Button] = field(default_factory=list)
     selected_ids: list[int] = field(default_factory=list)
+    command_mode: bool = False
     training_queue: list[str] = field(default_factory=list)
     camera: Camera = field(default_factory=Camera)
     next_id: int = 1
@@ -640,17 +661,21 @@ class Game:
     pan_start: tuple = (0, 0)
     pan_cam: tuple = (0, 0)
     map_surface: pygame.Surface | None = None
+    scaled_map_surface: pygame.Surface | None = None
+    scaled_map_zoom: float | None = None
+    minimap_surface: pygame.Surface | None = None
     nav_grid: NavigationGrid = field(default_factory=lambda: NavigationGrid(WORLD_W, WORLD_H, NAV_TILE))
     debug_nav: bool = False
     music_mode: str | None = None
     music_channel: pygame.mixer.Channel | None = None
+    music_volume: float = 0.35
     command_voice_timer: float = 0
     base_warning_timer: float = 0
     active_tab: str = "bldg"
     paused_buttons: list[Button] = field(default_factory=list)
     difficulty_buttons: list[Button] = field(default_factory=list)
     muted: bool = False
-    sfx_volume: float = 1.0
+    sfx_volume: float = 0.65
     cheat_buffer: str = ""
     menu_hover_key: str | None = None
     nav_vis_surface: pygame.Surface | None = None
@@ -706,6 +731,11 @@ class Game:
             )
         else:
             self.map_surface = self.create_fallback_map()
+        self.nav_grid.generate_from_map(self.map_surface)
+        self.minimap_surface = pygame.transform.smoothscale(
+            self.map_surface, (MINIMAP_W, MINIMAP_H)
+        )
+        self.minimap_surface.set_alpha(125)
 
     def create_fallback_map(self):
         surf = pygame.Surface((WORLD_W, WORLD_H))
@@ -753,7 +783,14 @@ class Game:
             self.sounds[key].set_volume(self.sfx_volume)
             self.sounds[key].play()
 
+    def set_muted(self, muted):
+        self.muted = muted
+        if self.music_channel:
+            self.music_channel.set_volume(0 if muted else self.music_volume)
+
     def play_music(self, key):
+        if self.music_channel is None:
+            return
         if key == "menu_music" and "menu_music" in self.sounds:
             self.music_mode = "menu"
             self.music_channel.play(self.sounds["menu_music"], loops=-1)
@@ -763,9 +800,24 @@ class Game:
         elif key == "none":
             self.music_mode = None
             self.music_channel.stop()
+        if self.music_channel:
+            self.music_channel.set_volume(0 if self.muted else self.music_volume)
 
     def selected(self):
         return [e for e in self.entities if e.id in self.selected_ids and e.hp > 0]
+
+    def zoom_at(self, amount, anchor=None):
+        old_zoom = self.camera.zoom
+        new_zoom = clamp(old_zoom + amount, 0.5, 2.0)
+        if new_zoom == old_zoom:
+            return
+        if anchor is None:
+            anchor = (VIEW_W / 2, TOP_H + VIEW_H / 2)
+        world_x = (anchor[0] - VIEW_W / 2) / old_zoom + self.camera.x
+        world_y = (anchor[1] - TOP_H - VIEW_H / 2) / old_zoom + self.camera.y
+        self.camera.zoom = new_zoom
+        self.camera.x = world_x - (anchor[0] - VIEW_W / 2) / new_zoom
+        self.camera.y = world_y - (anchor[1] - TOP_H - VIEW_H / 2) / new_zoom
 
     def closest_visible_enemy(self, unit):
         return min(
@@ -781,6 +833,10 @@ class Game:
         )
 
     def event(self, event):
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit()
+
         if self.game_over:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
                 self.reset_game()
@@ -810,12 +866,8 @@ class Game:
                         if btn.action == "resume":
                             self.paused = False
                         elif btn.action == "mute":
-                            self.muted = not self.muted
+                            self.set_muted(not self.muted)
             return
-
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
 
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_p:
@@ -824,7 +876,20 @@ class Game:
                 self.placing = None
                 self.repair_mode = False
                 self.sell_mode = False
+                self.command_mode = False
                 self.selected_ids = []
+                for entity in self.entities:
+                    entity.selected = False
+            elif event.key == pygame.K_m:
+                if self.command_mode:
+                    self.command_mode = False
+                    self.message = "Move order cancelled."
+                elif any(e.kind == "unit" for e in self.selected()):
+                    self.command_mode = True
+                    self.message = "Move or attack: click a destination or enemy."
+                else:
+                    self.message = "Select one or more units first."
+                self.message_timer = 2.5
             elif event.key == pygame.K_g:
                 self.debug_nav = not self.debug_nav
             elif event.key == pygame.K_DELETE:
@@ -838,9 +903,9 @@ class Game:
                 self.repair_mode = False
                 self.sell_mode = not self.sell_mode
             elif event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS:
-                self.camera.zoom = min(2.0, self.camera.zoom + 0.1)
+                self.zoom_at(0.1)
             elif event.key == pygame.K_MINUS:
-                self.camera.zoom = max(0.5, self.camera.zoom - 0.1)
+                self.zoom_at(-0.1)
             elif event.key in BUILD_KEYS:
                 self.placing = BUILD_KEYS[event.key]
                 self.repair_mode = False
@@ -848,7 +913,17 @@ class Game:
             elif event.key in TRAIN_KEYS:
                 self.train_unit(TRAIN_KEYS[event.key])
 
+        if event.type == pygame.MOUSEWHEEL:
+            mouse_pos = pygame.mouse.get_pos()
+            if mouse_pos[0] < VIEW_W:
+                self.zoom_at(event.y * 0.1, mouse_pos)
+            return
+
         if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button in (4, 5):
+                if event.pos[0] < VIEW_W:
+                    self.zoom_at(0.1 if event.button == 4 else -0.1, event.pos)
+                return
             if event.button == 1: # Left
                 if event.pos[0] >= VIEW_W:
                     for button in self.buttons:
@@ -856,6 +931,8 @@ class Game:
                             continue
                         if button.kind == "tab":
                             self.active_tab = button.action
+                        elif button.kind == "zoom":
+                            self.zoom_at(0.1 if button.action == "zoom_in" else -0.1)
                         elif button.kind == "build":
                             self.placing = button.action
                             self.repair_mode = False
@@ -878,6 +955,9 @@ class Game:
                     self.start_repair(event.pos)
                 elif self.sell_mode:
                     self.start_sell(event.pos)
+                elif self.command_mode:
+                    self.handle_right_click(event.pos)
+                    self.command_mode = False
                 else:
                     self.drag_start = event.pos
                     self.drag_pos = event.pos
@@ -922,6 +1002,23 @@ class Game:
         if not selected:
             return
 
+        clicked_ore = next(
+            (
+                index for index, ore in enumerate(self.ore)
+                if ore.available and math.hypot(wx - ore.x, wy - ore.y) <= 24
+            ),
+            None,
+        )
+        harvesters = [unit for unit in selected if unit.type == "harvester"]
+        if clicked_ore is not None and harvesters:
+            for harvester in harvesters:
+                if self.nearest_refinery(harvester) is None:
+                    self.message = "Build an Ore Refinery before harvesting."
+                    self.message_timer = 2.5
+                    continue
+                self.assign_harvester_to_ore(harvester, clicked_ore)
+            return
+
         # Check if we clicked an enemy entity
         target = None
         for e in self.entities:
@@ -933,7 +1030,7 @@ class Game:
         if target:
             # Attack target
             for e in selected:
-                if e.kind == "unit":
+                if e.kind == "unit" and e.atk > 0:
                     e.state = "attack"
                     e.target_id = target.id
                     e.path = []
@@ -953,6 +1050,9 @@ class Game:
                 e.target_id = None
                 e.path = self.nav_grid.find_path((e.x + e.w / 2, e.y + e.h / 2), goal)
                 e.path_goal = goal
+                e.state = "move" if e.path else "idle"
+                if e.type == "harvester":
+                    e.ore_index = None
             if units:
                 self.play_sfx("move")
 
@@ -969,23 +1069,34 @@ class Game:
         self.selected_ids = []
         for entity in self.entities:
             entity.selected = False
-        closest = None
-        closest_distance = 14
+        click_candidates = []
         for e in self.entities:
-            if e.kind == "unit" and e.team == TEAM_RED:
-                sx = (e.x + e.w/2 - self.camera.x) * self.camera.zoom + VIEW_W / 2
-                sy = (e.y + e.h/2 - self.camera.y) * self.camera.zoom + TOP_H + VIEW_H / 2
-                if is_click:
-                    distance = math.hypot(sx - x2, sy - y2)
-                    if distance < closest_distance:
-                        closest = e
-                        closest_distance = distance
-                elif rect.collidepoint(sx, sy):
-                    self.selected_ids.append(e.id)
-                    e.selected = True
-        if closest:
-            self.selected_ids.append(closest.id)
-            closest.selected = True
+            if e.team != TEAM_RED or e.hp <= 0:
+                continue
+            sx = (e.x + e.w / 2 - self.camera.x) * self.camera.zoom + VIEW_W / 2
+            sy = (e.y + e.h / 2 - self.camera.y) * self.camera.zoom + TOP_H + VIEW_H / 2
+            if e.kind == "unit":
+                minimum = TILE * (1.5 if e.type in ("conscript", "gi", "dog", "tesla_trooper") else 2)
+                size = round(max(e.w, minimum) * self.camera.zoom)
+                hit_rect = pygame.Rect(0, 0, size, size)
+                hit_rect.center = (round(sx), round(sy))
+            else:
+                hit_rect = pygame.Rect(
+                    round(sx - e.w * self.camera.zoom / 2),
+                    round(sy - e.h * self.camera.zoom / 2),
+                    round(e.w * self.camera.zoom),
+                    round(e.h * self.camera.zoom),
+                )
+            if is_click:
+                if hit_rect.inflate(8, 8).collidepoint(x2, y2):
+                    click_candidates.append((math.hypot(sx - x2, sy - y2), e))
+            elif rect.colliderect(hit_rect):
+                self.selected_ids.append(e.id)
+                e.selected = True
+        if click_candidates:
+            _, selected = min(click_candidates, key=lambda item: item[0])
+            self.selected_ids.append(selected.id)
+            selected.selected = True
 
     def place_building(self, pos):
         # Convert screen pos to world pos
@@ -993,7 +1104,7 @@ class Game:
         wy = (pos[1] - TOP_H - VIEW_H / 2) / self.camera.zoom + self.camera.y
         
         # Snap to grid
-        gx, gy = wx // TILE, wy // TILE
+        gx, gy = int(wx // TILE), int(wy // TILE)
         bx, by = gx * TILE, gy * TILE
         
         data = STRUCT_DEFS[self.placing]
@@ -1026,6 +1137,14 @@ class Game:
         self.entities.append(e)
         self.credits -= data["cost"]
         self.nav_grid.rebuild_building_occupancy(self.entities)
+        if self.placing == "refinery":
+            spawn_cell = self.nav_grid.nearest_walkable_cell(
+                *self.nav_grid.cell(bx + bw + TILE, by + bh / 2)
+            )
+            if spawn_cell:
+                hx, hy = self.nav_grid.cell_center(*spawn_cell)
+                self.add_unit("harvester", TEAM_RED, hx - UNIT_DEFS["harvester"]["size"] / 2,
+                              hy - UNIT_DEFS["harvester"]["size"] / 2)
         self.play_sfx("build_start")
         self.placing = None
 
@@ -1101,6 +1220,7 @@ class Game:
         self.next_id = 1
         self.wave = 1
         self.nav_grid.rebuild_building_occupancy(self.entities)
+        self.play_music("menu_music")
 
     def start_game(self, diff_key):
         self.difficulty = diff_key
@@ -1149,8 +1269,13 @@ class Game:
         self.nav_grid.rebuild_building_occupancy(self.entities)
         
         # Spawn some ore
-        for _ in range(15):
-            self.ore.append(Ore(random.randint(100, WORLD_W-100), random.randint(100, WORLD_H-100)))
+        attempts = 0
+        while len(self.ore) < 15 and attempts < 300:
+            attempts += 1
+            ox = random.randint(40, WORLD_W - 40)
+            oy = random.randint(40, WORLD_H - 40)
+            if self.nav_grid.is_walkable_world(ox, oy):
+                self.ore.append(Ore(ox, oy))
             
         self.play_music("theme")
         self.message = f"Battle Started: {diff['label']} Difficulty"
@@ -1174,9 +1299,167 @@ class Game:
         )
         self.entities.append(entity)
 
-    def update(self, dt):
-        if self.difficulty is None or self.paused:
+    def nearest_refinery(self, unit):
+        return min(
+            (e for e in self.entities if e.type == "refinery" and e.team == TEAM_RED and e.hp > 0),
+            key=lambda refinery: entity_distance(unit, refinery),
+            default=None,
+        )
+
+    def assign_harvester_to_ore(self, harvester, ore_index=None):
+        if self.nearest_refinery(harvester) is None:
+            return False
+        if harvester.cargo >= 3:
+            self.send_harvester_to_refinery(harvester)
+            return True
+        candidates = [
+            index for index, ore in enumerate(self.ore)
+            if ore.available and (ore_index is None or index == ore_index)
+        ]
+        if not candidates:
+            harvester.state = "idle"
+            harvester.ore_index = None
+            harvester.path = []
+            return False
+        index = min(
+            candidates,
+            key=lambda item: math.hypot(
+                harvester.center()[0] - self.ore[item].x,
+                harvester.center()[1] - self.ore[item].y,
+            ),
+        )
+        ore = self.ore[index]
+        destination = self.nav_grid.nearest_walkable_cell(*self.nav_grid.cell(ore.x, ore.y))
+        if destination is None:
+            return False
+        goal = self.nav_grid.cell_center(*destination)
+        harvester.path = self.nav_grid.find_path(harvester.center(), goal)
+        if not harvester.path:
+            return False
+        harvester.state = "harvest"
+        harvester.ore_index = index
+        harvester.target_id = None
+        harvester.path_goal = goal
+        return True
+
+    def send_harvester_to_refinery(self, harvester):
+        refinery = self.nearest_refinery(harvester)
+        if refinery is None:
+            harvester.state = "idle"
+            harvester.path = []
+            return False
+        harvester.state = "return"
+        harvester.target_id = refinery.id
+        harvester.ore_index = None
+        harvester.path = self.nav_grid.find_path(harvester.center(), refinery.center())
+        harvester.path_goal = refinery.center()
+        return True
+
+    def update_harvester(self, harvester, dt):
+        refinery = next(
+            (e for e in self.entities if e.id == harvester.target_id and e.type == "refinery" and e.hp > 0),
+            None,
+        ) if harvester.state == "return" else self.nearest_refinery(harvester)
+        if harvester.cargo >= 3:
+            if harvester.state != "return":
+                self.send_harvester_to_refinery(harvester)
+            refinery = next(
+                (e for e in self.entities if e.id == harvester.target_id and e.type == "refinery" and e.hp > 0),
+                None,
+            )
+        if harvester.state == "return":
+            if refinery is None:
+                harvester.state = "idle"
+                harvester.target_id = None
+                harvester.path = []
+                return
+            if entity_distance(harvester, refinery) <= 70:
+                ore_value = self.ore[0].value if self.ore else 250
+                delivered_value = harvester.cargo * ore_value
+                self.credits += delivered_value
+                harvester.cargo = 0
+                harvester.state = "idle"
+                harvester.target_id = None
+                harvester.path = []
+                harvester.harvest_timer = 0
+                self.message = f"Ore delivered: +${delivered_value}"
+                self.message_timer = 2.0
+                return
+            if not harvester.path:
+                harvester.path = self.nav_grid.find_path(harvester.center(), refinery.center())
+            self.advance_unit(harvester, dt)
             return
+        if refinery is None:
+            harvester.state = "idle"
+            harvester.ore_index = None
+            return
+        if harvester.state != "harvest" or harvester.ore_index is None:
+            if not self.assign_harvester_to_ore(harvester):
+                return
+        ore = self.ore[harvester.ore_index]
+        if not ore.available:
+            harvester.state = "idle"
+            harvester.ore_index = None
+            harvester.path = []
+            self.assign_harvester_to_ore(harvester)
+            return
+        if math.hypot(harvester.center()[0] - ore.x, harvester.center()[1] - ore.y) <= 28:
+            harvester.path = []
+            harvester.harvest_timer += dt
+            if harvester.harvest_timer >= 1.2:
+                harvester.harvest_timer -= 1.2
+                ore.available = False
+                ore.respawn = 25
+                harvester.cargo += 1
+                harvester.ore_index = None
+                if harvester.cargo >= 3:
+                    self.send_harvester_to_refinery(harvester)
+                else:
+                    harvester.state = "idle"
+                    self.assign_harvester_to_ore(harvester)
+            return
+        if not harvester.path:
+            self.assign_harvester_to_ore(harvester, harvester.ore_index)
+        self.advance_unit(harvester, dt)
+
+    def update_repair(self, dt):
+        if self.repair_target_id is None:
+            return
+        target = next(
+            (e for e in self.entities if e.id == self.repair_target_id and e.hp > 0),
+            None,
+        )
+        if target is None or target.hp >= target.max_hp:
+            self.repair_target_id = None
+            self.repair_timer = 0
+            return
+        self.repair_timer += dt
+        while self.repair_timer >= REPAIR_INTERVAL:
+            if self.credits < REPAIR_COST:
+                self.repair_target_id = None
+                self.repair_timer = 0
+                self.message = "Not enough credits to continue repairs."
+                self.message_timer = 2
+                return
+            self.repair_timer -= REPAIR_INTERVAL
+            target.hp = min(target.max_hp, target.hp + REPAIR_HP)
+            self.credits -= REPAIR_COST
+            if target.hp >= target.max_hp:
+                self.repair_target_id = None
+                self.repair_timer = 0
+                return
+
+    def update(self, dt):
+        if self.difficulty is None or self.paused or self.game_over:
+            return
+
+        for ore in self.ore:
+            if not ore.available and ore.respawn > 0:
+                ore.respawn -= dt
+                if ore.respawn <= 0:
+                    ore.available = True
+
+        self.update_repair(dt)
 
         # 1. Training
         if self.training_queue:
@@ -1194,10 +1477,11 @@ class Game:
         self.wave_timer += dt
         diff = DIFFICULTIES[self.difficulty]
         if self.wave_timer >= diff["wave_interval"]:
-            self.spawn_wave()
             self.wave_timer = 0
-            self.wave += 1
-            self.play_sfx("base_danger")
+            if self.wave <= diff["max_wave_count"]:
+                self.spawn_wave()
+                self.wave += 1
+                self.play_sfx("base_danger")
 
         # 3. Entity Updates
         for e in self.entities[:]:
@@ -1214,6 +1498,9 @@ class Game:
                 continue
 
             if e.kind == "unit":
+                if e.team == TEAM_RED and e.type == "harvester":
+                    self.update_harvester(e, dt)
+                    continue
                 # Simple AI for enemies
                 if e.team == TEAM_BLUE:
                     if e.state == "idle":
@@ -1381,27 +1668,33 @@ class Game:
         
         # Spawn enemies at the edge
         for _ in range(count):
+            spawn = None
+            for _attempt in range(30):
+                candidate = (random.randrange(WORLD_W), random.randint(0, 200))
+                if self.nav_grid.is_walkable_world(*candidate):
+                    spawn = candidate
+                    break
+            if spawn is None:
+                continue
             u_type = random.choice(["gi", "grizzly", "prism"])
             data = UNIT_DEFS[u_type]
-            ex = random.randint(0, WORLD_W)
-            ey = random.randint(0, 200) # Top area
-            if self.nav_grid.is_walkable_world(ex, ey):
-                e = Entity(
-                    id=self.uid(),
-                    kind="unit",
-                    type=u_type,
-                    team=TEAM_BLUE,
-                    x=ex, y=ey,
-                    w=data["size"], h=data["size"],
-                    hp=data["hp"] * diff["enemy_hp"],
-                    max_hp=data["hp"] * diff["enemy_hp"],
-                    atk=data["atk"] * diff["enemy_atk"],
-                    atk_spd=data["atk_spd"],
-                    range=data["range"], sight=data["sight"],
-                    spd=data["spd"], size=data["size"],
-                    color=data["color"]
-                )
-                self.entities.append(e)
+            ex, ey = spawn
+            e = Entity(
+                id=self.uid(),
+                kind="unit",
+                type=u_type,
+                team=TEAM_BLUE,
+                x=ex, y=ey,
+                w=data["size"], h=data["size"],
+                hp=data["hp"] * diff["enemy_hp"],
+                max_hp=data["hp"] * diff["enemy_hp"],
+                atk=data["atk"] * diff["enemy_atk"],
+                atk_spd=data["atk_spd"],
+                range=data["range"], sight=data["sight"],
+                spd=data["spd"], size=data["size"],
+                color=data["color"]
+            )
+            self.entities.append(e)
 
     def draw(self):
         self.screen.fill((20, 20, 20))
@@ -1412,11 +1705,39 @@ class Game:
         
         # Render Map
         if self.map_surface:
-            # Simple camera transform
-            scaled_map = pygame.transform.scale(self.map_surface, (int(WORLD_W * self.camera.zoom), int(WORLD_H * self.camera.zoom)))
+            if self.scaled_map_surface is None or self.scaled_map_zoom != self.camera.zoom:
+                map_size = (
+                    max(1, round(WORLD_W * self.camera.zoom)),
+                    max(1, round(WORLD_H * self.camera.zoom)),
+                )
+                self.scaled_map_surface = pygame.transform.scale(self.map_surface, map_size)
+                self.scaled_map_zoom = self.camera.zoom
             off_x = VIEW_W / 2 - self.camera.x * self.camera.zoom
             off_y = TOP_H + VIEW_H / 2 - self.camera.y * self.camera.zoom
-            self.screen.blit(scaled_map, (off_x, off_y))
+            self.screen.blit(self.scaled_map_surface, (off_x, off_y))
+
+        if self.debug_nav:
+            self.draw_nav_overlay()
+
+        for ore in self.ore:
+            if not ore.available:
+                continue
+            sx = (ore.x - self.camera.x) * self.camera.zoom + VIEW_W / 2
+            sy = (ore.y - self.camera.y) * self.camera.zoom + TOP_H + VIEW_H / 2
+            if view_rect.collidepoint(sx, sy):
+                radius = max(2, round(5 * self.camera.zoom))
+                for ox, oy, color in (
+                    (-7, 1, (225, 165, 35)),
+                    (0, -4, (255, 210, 65)),
+                    (7, 2, (245, 190, 45)),
+                    (0, 6, (180, 125, 28)),
+                ):
+                    pygame.draw.circle(
+                        self.screen,
+                        color,
+                        (round(sx + ox * self.camera.zoom), round(sy + oy * self.camera.zoom)),
+                        radius,
+                    )
         
         # Render Entities
         for e in self.entities:
@@ -1446,10 +1767,25 @@ class Game:
                         sprite = self.assets.get(f"{team_name}_rhino")
                 else:
                     sprite = self.assets.get(f"{team_name}_{sprite_type}")
+                if sprite is None:
+                    # Keep structures recognizable if one optional art file fails to load.
+                    fallback_types = (
+                        ("warfactory", "barracks", "powerplant")
+                        if e.kind == "structure"
+                        else ("troop", "rhino", "dog")
+                    )
+                    sprite = next(
+                        (self.assets.get(f"{team_name}_{kind}") for kind in fallback_types
+                         if self.assets.get(f"{team_name}_{kind}") is not None),
+                        None,
+                    )
                 if sprite:
                     self.blit_fit(sprite, draw_rect, 1.0)
                 else:
-                    pygame.draw.rect(self.screen, e.color, draw_rect)
+                    pygame.draw.rect(self.screen, (35, 25, 30), draw_rect, border_radius=4)
+                    pygame.draw.rect(self.screen, e.color, draw_rect, 3, border_radius=4)
+                    inner = draw_rect.inflate(-draw_rect.width // 3, -draw_rect.height // 3)
+                    pygame.draw.rect(self.screen, e.color, inner, border_radius=3)
                 if e.selected:
                     pygame.draw.rect(self.screen, (255, 255, 255), draw_rect, 2)
                 
@@ -1487,6 +1823,26 @@ class Game:
         if self.message_timer > 0:
             msg_surf = self.font.render(self.message, True, (255, 255, 255))
             self.screen.blit(msg_surf, (VIEW_W // 2 - msg_surf.get_width() // 2, TOP_H + 20))
+
+    def draw_nav_overlay(self):
+        overlay = pygame.Surface((VIEW_W, VIEW_H), pygame.SRCALPHA)
+        zoom = self.camera.zoom
+        world_left = self.camera.x - VIEW_W / (2 * zoom)
+        world_top = self.camera.y - VIEW_H / (2 * zoom)
+        start_x = max(0, int(world_left // TILE))
+        end_x = min(self.nav_grid.cols, int((world_left + VIEW_W / zoom) // TILE) + 1)
+        start_y = max(0, int(world_top // TILE))
+        end_y = min(self.nav_grid.rows, int((world_top + VIEW_H / zoom) // TILE) + 1)
+        cell_size = max(1, round(TILE * zoom))
+        for gy in range(start_y, end_y):
+            for gx in range(start_x, end_x):
+                sx = round((gx * TILE - world_left) * zoom)
+                sy = round((gy * TILE - world_top) * zoom)
+                cell_rect = pygame.Rect(sx, sy, cell_size, cell_size)
+                if self.nav_grid.static_blocked[gy][gx] or self.nav_grid.building_occupied[gy][gx]:
+                    pygame.draw.rect(overlay, (220, 35, 35, 95), cell_rect)
+                pygame.draw.rect(overlay, (210, 230, 190, 45), cell_rect, 1)
+        self.screen.blit(overlay, (0, TOP_H))
 
     def draw_topbar(self):
         pygame.draw.rect(self.screen, (30, 30, 30), (0, 0, SCREEN_W, TOP_H))
@@ -1555,6 +1911,18 @@ class Game:
         
         self.draw_minimap(x + 22, TOP_H + 80)
         self.buttons = []
+
+        zoom_y = TOP_H + 80 + MINIMAP_H - 25
+        for zoom_x, label, action in (
+            (x + 22 + MINIMAP_W - 52, "−", "zoom_out"),
+            (x + 22 + MINIMAP_W - 26, "+", "zoom_in"),
+        ):
+            zoom_rect = pygame.Rect(zoom_x, zoom_y, 22, 21)
+            pygame.draw.rect(self.screen, (28, 12, 38), zoom_rect, border_radius=3)
+            pygame.draw.rect(self.screen, (245, 185, 45), zoom_rect, 1, border_radius=3)
+            zoom_label = self.font.render(label, True, (255, 225, 130))
+            self.screen.blit(zoom_label, zoom_label.get_rect(center=zoom_rect.center))
+            self.buttons.append(Button(zoom_rect, label, action, "zoom"))
         
         tabs = [("bldg", "BLDG"), ("defn", "DEFN"), ("inf", "INF"), ("veh", "VEH")]
         tab_w, tab_h, tab_gap = 50, 24, 6
@@ -1629,7 +1997,7 @@ class Game:
             icon_key = f"red_{item_id}"
             if item_id == "conscript": icon_key = "red_troop"
             elif item_id == "tesla_trooper": icon_key = "red_tesla_trooper"
-            icon_rect = pygame.Rect(cx + 12, cy + 6, card_w - 24, 46)
+            icon_rect = pygame.Rect(cx + 12, cy + 4, card_w - 24, 34)
             
             asset = self.assets.get(icon_key)
             if item_id == "repair": self.draw_hammer_icon(icon_rect)
@@ -1645,10 +2013,10 @@ class Game:
             hk_lbl = self.small.render(f"[{hotkey}]", True, (80, 200, 240))
             self.screen.blit(hk_lbl, (cx + 6, cy + 4))
             name_lbl = self.small.render(data["name"].upper().split()[0], True, (255, 255, 255))
-            self.screen.blit(name_lbl, (cx + 6, cy + 54))
+            self.screen.blit(name_lbl, name_lbl.get_rect(center=(card_rect.centerx, cy + 47)))
             cost_text = f"${cost}" if cost else "50%"
             cost_lbl = self.small.render(cost_text, True, (245, 185, 45))
-            self.screen.blit(cost_lbl, (cx + card_w - cost_lbl.get_width() - 6, cy + 54))
+            self.screen.blit(cost_lbl, cost_lbl.get_rect(center=(card_rect.centerx, cy + 64)))
             
             if locked:
                 lock_lbl = self.small.render("LOCKED", True, (255, 50, 50))
@@ -1690,9 +2058,20 @@ class Game:
         if selected:
             first = selected[0]
             name = STRUCT_DEFS[first.type]["name"] if first.kind == "structure" else UNIT_DEFS[first.type]["name"]
-            lines = [f">> COMMAND: {name.upper()}", f">> INTEGRITY: {round(first.hp)} / {round(first.max_hp)} HP", f">> SECTOR CODES: LOCKED ({len(selected)} UNIT)"]
+            if first.type == "harvester":
+                lines = [
+                    f">> UNIT: {name.upper()}",
+                    f">> HEALTH: {round(first.hp)} / {round(first.max_hp)} HP",
+                    f">> ORE CARGO: {first.cargo}/3 LOADS",
+                ]
+            else:
+                lines = [
+                    f">> UNIT: {name.upper()}",
+                    f">> HEALTH: {round(first.hp)} / {round(first.max_hp)} HP",
+                    f">> SELECTED UNITS: {len(selected)}",
+                ]
         else:
-            lines = [">> COMMUNICATIONS ACTIVE", ">> AWAITING FIELD SELECTION", ">> USSR TACTICAL GRID LINKED"]
+            lines = [">> COMMS ONLINE", ">> SELECT A FIELD UNIT", ">> USSR GRID CONNECTED"]
         for i, line in enumerate(lines):
             surf = self.small.render(line, True, (245, 160, 40) if selected else (145, 210, 80))
             self.screen.blit(surf, (x + 24, info_y + 10 + i * 22))
@@ -1702,10 +2081,8 @@ class Game:
         pygame.draw.rect(self.screen, (8, 18, 16), rect)
         pygame.draw.rect(self.screen, (245, 185, 45), rect.inflate(4, 4), 2, border_radius=4)
         pygame.draw.rect(self.screen, (120, 45, 175), rect.inflate(8, 8), 2, border_radius=6)
-        if self.map_surface:
-            mini = pygame.transform.smoothscale(self.map_surface, (MINIMAP_W, MINIMAP_H))
-            mini.set_alpha(125)
-            self.screen.blit(mini, rect)
+        if self.minimap_surface:
+            self.screen.blit(self.minimap_surface, rect)
         for ore in self.ore:
             if ore.available:
                 px, py = x + ore.x / WORLD_W * MINIMAP_W, y + ore.y / WORLD_H * MINIMAP_H
@@ -1721,12 +2098,12 @@ class Game:
     def draw_bottombar(self):
         y = SCREEN_H - BOTTOM_H
         pygame.draw.rect(self.screen, (18, 16, 14), (0, y, SCREEN_W, BOTTOM_H))
-        text = "Left drag: select   Right click: move/attack/cancel tool   H: repair   X/Sell: sell building   Delete: sell selected building"
+        text = "Drag: select   Right-click: move/attack/ore   Wheel / +/-: zoom   H: repair   X: sell"
         surf = self.small.render(text, True, (190, 170, 140))
         self.screen.blit(surf, (18, y + 9))
         queue = ", ".join(self.training_queue[:5]) if self.training_queue else "empty"
         qsurf = self.small.render(f"Queue: {queue}", True, (220, 180, 110))
-        self.screen.blit(qsurf, (SCREEN_W - 360, y + 9))
+        self.screen.blit(qsurf, qsurf.get_rect(midright=(SCREEN_W - 18, y + BOTTOM_H // 2)))
 
     def draw_center_banner(self, title, subtitle):
         overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
@@ -1819,6 +2196,7 @@ async def main():
     except Exception:
         import traceback
         traceback.print_exc()
+    game.play_music("menu_music")
 
     while True:
         try:

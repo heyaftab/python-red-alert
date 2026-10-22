@@ -136,7 +136,7 @@ class PathfindingDebugger:
         
         # Draw path as line
         if len(screen_points) > 1:
-            pygame.draw.lines(surface, (0, 255, 255), screen_points, 2)
+            pygame.draw.lines(surface, (0, 255, 255), False, screen_points, 2)
         
         # Draw waypoint markers
         for i, (sx, sy) in enumerate(screen_points):

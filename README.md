@@ -142,7 +142,7 @@ A **Yuri's Revenge themed sidebar** puts everything at your fingertips:
 | :--- | :--- |
 | 🗂️ **Category Tabs** | Switch between Buildings (`BLDG`), Defenses (`DEFN`), Infantry (`INF`) and Vehicles (`VEH`) |
 | 🔋 **Segmented Power Bar** | Vertical indicator of power output vs consumption in red / yellow / green |
-| 🛰️ **Interactive Minimap** | Beveled gold-framed radar showing units, buildings, camera viewport and ore fields |
+| 🛰️ **Command Minimap** | Beveled gold-framed radar showing units, buildings, camera viewport and ore fields |
 | 🃏 **Graphic Cards Grid** | 2-column cards with sprites, hotkey indexes, costs, queued counts and vertical training sweeps |
 | 🟧 **Amber Vector Console** | Futuristic screen showing HP, selection quantity and grid connectivity |
 
@@ -151,9 +151,9 @@ A **Yuri's Revenge themed sidebar** puts everything at your fingertips:
 <table>
   <tr>
     <td width="25%" align="center" valign="top"><h2>🔍</h2><b>Zoom</b><br/><br/>Mouse wheel or <code>+</code> / <code>-</code></td>
-    <td width="25%" align="center" valign="top"><h2>✋</h2><b>Pan</b><br/><br/>Middle mouse drag or Arrow / <code>IJKL</code> keys</td>
-    <td width="25%" align="center" valign="top"><h2>🖱️</h2><b>Edge scrolling</b><br/><br/>Move the cursor to a window border or corner</td>
-    <td width="25%" align="center" valign="top"><h2>⬛</h2><b>Classic selection</b><br/><br/>Left-click drag box and Shift-click grouping</td>
+    <td width="25%" align="center" valign="top"><h2>✋</h2><b>Pan</b><br/><br/>Middle mouse drag</td>
+    <td width="25%" align="center" valign="top"><h2>💰</h2><b>Ore orders</b><br/><br/>Select a harvester and right-click a deposit</td>
+    <td width="25%" align="center" valign="top"><h2>⬛</h2><b>Classic selection</b><br/><br/>Left-click a unit or building; drag to select a group</td>
   </tr>
 </table>
 
@@ -161,13 +161,13 @@ A **Yuri's Revenge themed sidebar** puts everything at your fingertips:
 
 - Full unit attributes: **HP, Range, Attack Speed, Fire Rate, Sight Range, Base Costs**
 - **Tesla Coils** and **Tesla Turrets** auto-target and blast enemies that breach their range
-- Dynamic **fire particle effects** and floating **damage labels** over combat sites
+- Dynamic **fire particle effects** during combat
 
 <img src="docs/readme/divider.svg" width="100%" alt="divider" />
 
 ## 🛠️ Required Dependencies
 
-You need **Python 3.8+** and:
+You need **Python 3.10+** and:
 
 | Library | Role |
 | :--- | :--- |
@@ -225,25 +225,22 @@ python3 pathfinding_debug.py     # A* benchmarks and terrain walkability stats
 | Input | Action |
 | :--- | :--- |
 | **Left-click + drag** | Selection box for grouping units |
-| **Shift + Left-click** | Add or remove units from the selection |
 | **Left-click** (structure active) | Place the selected building |
-| **Right-click** | Move, harvest ore, or attack an enemy unit/structure |
+| **Right-click** | Move selected units, attack a clicked enemy, or order a selected harvester to a clicked ore deposit |
 | **Middle-click + drag** | Pan the camera |
 | **Scroll wheel** | Zoom in / out |
-| **Edge hover** (within 20px) | Scroll the map in that direction |
 
 ### ⌨️ Hotkeys
 
 | Key | Action |
 | :---: | :--- |
-| `Esc` | Cancel placement / Deselect / Unpause |
+| `Esc` | Cancel placement or deselect units |
 | `P` | Pause / Resume |
 | `G` | Toggle pathfinding grid overlay (debug) |
-| `Del` | Sell selected units or structures (50% refund on buildings) |
+| `Del` | Sell selected buildings (50% refund) |
 | `+` / `=` | Zoom in |
 | `-` | Zoom out |
-| `Arrows` / `I` `J` `K` `L` | Pan the camera |
-| `R` | Return to Main Menu (Game Over / Victory screen) |
+| `R` | Return to the difficulty menu after Game Over |
 
 ### 🏗️ Base Construction Keys
 
@@ -252,7 +249,7 @@ python3 pathfinding_debug.py     # A* benchmarks and terrain walkability stats
 | `1` | ⚡ Power Plant | $500 | Generates energy |
 | `2` | 🏠 Barracks | $300 | Trains infantry |
 | `3` | 🔧 War Factory | $2000 | Builds vehicles |
-| `4` | 🏭 Ore Refinery | $2000 | Lets harvesters gather credits |
+| `4` | 🏭 Ore Refinery | $2000 | Deploys a harvester that automatically gathers ore and returns for credits |
 | `5` | 🔫 Tesla Turret | $600 | Standard base defense |
 | `6` | ⚡ Tesla Coil | $1500 | Advanced high-damage defense |
 | `7` | 📡 Radar Dome | $1000 | Displays minimap features |
@@ -268,6 +265,8 @@ python3 pathfinding_debug.py     # A* benchmarks and terrain walkability stats
 | `A` | 🛡️ Rhino Tank | $900 | Standard battle tank |
 | `S` | 🚀 V3 Rocket Launcher | $1200 | Long-range artillery |
 | `D` | ☢️ Apocalypse Tank | $2000 | Heavy dual-cannon armor |
+
+Building an Ore Refinery deploys one harvester. It automatically gathers nearby ore and returns to the refinery; each deposit adds $250, and the harvester unloads after three deposits. You can also select the harvester and right-click a specific visible ore deposit.
 
 <img src="docs/readme/divider.svg" width="100%" alt="divider" />
 

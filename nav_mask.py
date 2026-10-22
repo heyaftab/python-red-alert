@@ -117,7 +117,11 @@ def get_walkable_neighbors(nav_mask, tx, ty, include_diagonals=True):
     if include_diagonals:
         for dx, dy in [(1, 1), (1, -1), (-1, 1), (-1, -1)]:
             nx, ny = tx + dx, ty + dy
-            if is_walkable(nav_mask, nx, ny):
+            if (
+                is_walkable(nav_mask, nx, ny)
+                and is_walkable(nav_mask, tx + dx, ty)
+                and is_walkable(nav_mask, tx, ty + dy)
+            ):
                 neighbors.append((nx, ny))
     return neighbors
 

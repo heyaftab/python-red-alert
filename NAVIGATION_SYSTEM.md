@@ -44,7 +44,7 @@ The navigation pipeline reads `assets/Map.png`, classifies terrain pixels, reduc
 | Orange or brown | Cliffs and walls | Blocked |
 | Green | Open ground | Walkable |
 | Sandy or tan | Open ground | Walkable |
-| Other colors | Unclassified | Unknown; handled conservatively |
+| Other colors | Unclassified | Treated as walkable |
 
 ### 2. Collision map generation
 
@@ -52,8 +52,8 @@ The map is divided into **20×20 pixel tiles**. Each tile is marked as follows:
 
 | Value | State | Rule |
 | :---: | :--- | :--- |
-| `1` | Blocked | More than 30% obstacle pixels |
-| `0` | Walkable | More than 70% open ground |
+| `1` | Blocked | More than 50% of sampled opaque pixels match obstacle colors |
+| `0` | Walkable | At most 50% of sampled opaque pixels match obstacle colors |
 
 | Map size | Tile grid | Blocked tiles | Walkable tiles |
 | :---: | :---: | :---: | :---: |

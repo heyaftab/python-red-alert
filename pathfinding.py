@@ -58,18 +58,39 @@ class Pathfinder:
         Returns:
             List of pixel coordinates representing the path, or None if no path exists
         """
+        if not (0 <= start_px < self.width * self.tile_size and
+                0 <= start_py < self.height * self.tile_size and
+                0 <= goal_px < self.width * self.tile_size and
+                0 <= goal_py < self.height * self.tile_size):
+            return None
+
         # Convert to tile coordinates
         start_tile = self.pixel_to_tile(start_px, start_py)
         goal_tile = self.pixel_to_tile(goal_px, goal_py)
         
-        # Check if goal is walkable
-        if not is_walkable(self.nav_mask, goal_tile[0], goal_tile[1]):
+        # Reject coordinates outside the map instead of silently clamping them
+        # to an edge tile.
+        if not (0 <= start_tile[0] < self.width and 0 <= start_tile[1] < self.height):
             return None
+        if not (0 <= goal_tile[0] < self.width and 0 <= goal_tile[1] < self.height):
+            return None
+
+        if not is_walkable(self.nav_mask, start_tile[0], start_tile[1]):
+            nearest_start = self.get_nearest_walkable_point(start_px, start_py)
+            if nearest_start is None:
+                return None
+            start_tile = self.pixel_to_tile(*nearest_start)
+        if not is_walkable(self.nav_mask, goal_tile[0], goal_tile[1]):
+            nearest_goal = self.get_nearest_walkable_point(goal_px, goal_py)
+            if nearest_goal is None:
+                return None
+            goal_tile = self.pixel_to_tile(*nearest_goal)
         
         # Check cache
-        cache_key = (start_tile, goal_tile)
+        cache_key = (start_tile, goal_tile, allow_diagonals)
         if cache_key in self.cache:
-            return self.cache[cache_key]
+            cached_path = self.cache[cache_key]
+            return list(cached_path) if cached_path is not None else None
         
         # A* algorithm
         open_set = []
@@ -96,8 +117,8 @@ class Pathfinder:
                 path.reverse()
                 
                 # Cache the result
-                self.cache[cache_key] = path
-                return path
+                self.cache[cache_key] = tuple(path)
+                return list(path)
             
             # Get neighbors (cardinal or with diagonals)
             if allow_diagonals:
